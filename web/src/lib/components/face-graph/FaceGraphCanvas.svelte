@@ -18,6 +18,7 @@
     onSelect: (node: FaceGraphNodeDto, options: { additive: boolean }) => void;
     onOpen: (node: FaceGraphNodeDto) => void;
     onClear: () => void;
+    onMove: (node: FaceGraphNodeDto, position: FaceGraphPosition) => void;
     hoverCard?: Snippet<[FaceGraphNodeDto]>;
   };
 
@@ -32,6 +33,7 @@
     onSelect,
     onOpen,
     onClear,
+    onMove,
     hoverCard,
   }: Props = $props();
 
@@ -41,6 +43,8 @@
   const EDGE_MIN_SCALE = 0.3;
   const FOCUS_RADIUS = 48;
   const FIT_PADDING = 40;
+  // moving the pointer less than this while pressing a node is a click, not a drag
+  const DRAG_THRESHOLD = 4;
 
   let canvas = $state<HTMLCanvasElement>();
   let primaryProbe = $state<HTMLElement>();
@@ -275,12 +279,55 @@
       return { x: event.clientX - rect.left, y: event.clientY - rect.top };
     };
 
+    let pressed: { node: FaceGraphNodeDto; x: number; y: number; offsetX: number; offsetY: number } | undefined;
+    let isDragging = false;
+    let wasDragged = false;
+
+    const onPointerDown = (event: PointerEvent) => {
+      const { x, y } = pointOf(event);
+      const node = event.button === 0 ? findNode(x, y) : undefined;
+      const position = node && positions.get(node.id);
+      if (!node || !position) {
+        return;
+      }
+      const [graphX, graphY] = transform.invert([x, y]);
+      pressed = { node, x, y, offsetX: position.x - graphX, offsetY: position.y - graphY };
+      isDragging = false;
+      element.setPointerCapture(event.pointerId);
+    };
+
     const onPointerMove = (event: PointerEvent) => {
       pointer = pointOf(event);
-      hovered = findNode(pointer.x, pointer.y);
+      if (!pressed) {
+        hovered = findNode(pointer.x, pointer.y);
+        return;
+      }
+
+      isDragging ||= Math.hypot(pointer.x - pressed.x, pointer.y - pressed.y) > DRAG_THRESHOLD;
+      if (isDragging) {
+        hovered = undefined;
+        const [graphX, graphY] = transform.invert([pointer.x, pointer.y]);
+        onMove(pressed.node, { x: graphX + pressed.offsetX, y: graphY + pressed.offsetY });
+      }
+    };
+
+    const onPointerUp = (event: PointerEvent) => {
+      if (!pressed) {
+      	return;
+      }
+
+      element.releasePointerCapture(event.pointerId);
+      // the click that follows a drag must not change the selection
+      wasDragged = isDragging;
+      pressed = undefined;
+      isDragging = false;
     };
     const onPointerLeave = () => (hovered = undefined);
     const onClick = (event: MouseEvent) => {
+      if (wasDragged) {
+        wasDragged = false;
+        return;
+      }
       const { x, y } = pointOf(event);
       const node = findNode(x, y);
       if (node) {
@@ -298,6 +345,16 @@
     };
 
     zoomBehavior = zoom<HTMLCanvasElement, unknown>()
+      // pressing a node drags the node, pressing the background pans the graph
+      .filter((event: MouseEvent | WheelEvent | TouchEvent) => {
+        if (event.type === 'wheel') {
+          return true;
+        }
+        const point = 'touches' in event ? event.touches[0] : (event as MouseEvent);
+        const rect = element.getBoundingClientRect();
+        const isOnNode = !!point && !!findNode(point.clientX - rect.left, point.clientY - rect.top);
+        return !isOnNode && !('button' in event && event.button);
+      })
       .scaleExtent([0.02, 8])
       .on('zoom', (event: { transform: ZoomTransform }) => {
         transform = event.transform;
@@ -306,6 +363,9 @@
       });
     select(element).call(zoomBehavior).on('dblclick.zoom', null);
 
+    element.addEventListener('pointerdown', onPointerDown);
+    element.addEventListener('pointerup', onPointerUp);
+    element.addEventListener('pointercancel', onPointerUp);
     element.addEventListener('pointermove', onPointerMove);
     element.addEventListener('pointerleave', onPointerLeave);
     element.addEventListener('click', onClick);
@@ -313,6 +373,9 @@
 
     return () => {
       select(element).on('.zoom', null);
+      element.removeEventListener('pointerdown', onPointerDown);
+      element.removeEventListener('pointerup', onPointerUp);
+      element.removeEventListener('pointercancel', onPointerUp);
       element.removeEventListener('pointermove', onPointerMove);
       element.removeEventListener('pointerleave', onPointerLeave);
       element.removeEventListener('click', onClick);

@@ -15,12 +15,16 @@ export type FaceGraphFilters = {
   showHidden: boolean;
   showUnassigned: boolean;
   minPhotos: number;
+  /** `undefined` means no upper limit */
+  maxPhotos?: number;
 };
 
 const MIN_RADIUS = 6;
 const MAX_RADIUS = 60;
 const NODE_PADDING = 3;
 const LAYOUT_TICKS = 300;
+// how much the layout is stirred up while a node is dragged
+const DRAG_ALPHA = 0.3;
 
 /** the area of a node is proportional to the number of photos of the person */
 export const nodeRadius = (assetCount: number) =>
@@ -40,7 +44,9 @@ export const matchesFilters = (node: FaceGraphNodeDto, filters: FaceGraphFilters
   if (filters.unnamedOnly && !isUnnamed(node)) {
     return false;
   }
-  return node.assetCount >= filters.minPhotos;
+  return (
+    node.assetCount >= filters.minPhotos && (filters.maxPhotos === undefined || node.assetCount <= filters.maxPhotos)
+  );
 };
 
 /** named people matching the search, the ones with the most photos first */
@@ -69,7 +75,7 @@ export const getNeighbors = (id: string, edges: FaceGraphEdgeDto[]) =>
  * Spreads the nodes out so they do not overlap, while keeping linked nodes close together
  * and unrelated nodes near the position suggested by the server.
  */
-export const computeLayout = (nodes: FaceGraphNodeDto[], edges: FaceGraphEdgeDto[]) => {
+export const createLayout = (nodes: FaceGraphNodeDto[], edges: FaceGraphEdgeDto[]) => {
   const totalArea = nodes.reduce((sum, node) => sum + Math.PI * (nodeRadius(node.assetCount) + NODE_PADDING) ** 2, 0);
   const scale = Math.sqrt(totalArea) * 1.5;
 
@@ -80,8 +86,11 @@ export const computeLayout = (nodes: FaceGraphNodeDto[], edges: FaceGraphEdgeDto
     seedY: node.y * scale,
     x: node.x * scale,
     y: node.y * scale,
+    fx: undefined as number | undefined,
+    fy: undefined as number | undefined,
   }));
   type SimulationNode = (typeof simulationNodes)[number];
+  const byId = new Map(simulationNodes.map((node) => [node.id, node]));
 
   const ids = new Set(nodes.map(({ id }) => id));
   const links = edges
@@ -89,7 +98,7 @@ export const computeLayout = (nodes: FaceGraphNodeDto[], edges: FaceGraphEdgeDto
     .map(({ source, target, distance }) => ({ source, target, distance }));
   type SimulationLink = { source: SimulationNode | string; target: SimulationNode | string; distance: number };
 
-  forceSimulation(simulationNodes)
+  const simulation = forceSimulation(simulationNodes)
     .force(
       'link',
       forceLink<SimulationNode, SimulationLink>(links)
@@ -109,8 +118,29 @@ export const computeLayout = (nodes: FaceGraphNodeDto[], edges: FaceGraphEdgeDto
     .stop()
     .tick(LAYOUT_TICKS);
 
-  return new Map<string, FaceGraphPosition>(simulationNodes.map(({ id, x, y }) => [id, { x, y }]));
+  return {
+    getPositions: () => new Map<string, FaceGraphPosition>(simulationNodes.map(({ id, x, y }) => [id, { x, y }])),
+    /** holds a node at the given position, the other nodes make room for it on the next steps */
+    pin: (id: string, position: FaceGraphPosition) => {
+      const node = byId.get(id);
+      if (node) {
+        node.fx = position.x;
+        node.fy = position.y;
+        simulation.alpha(Math.max(simulation.alpha(), DRAG_ALPHA));
+      }
+    },
+    /** advances the layout, returns whether it is still moving */
+    step: () => {
+      simulation.tick();
+      return simulation.alpha() > simulation.alphaMin();
+    },
+  };
 };
+
+export type FaceGraphLayout = ReturnType<typeof createLayout>;
+
+export const computeLayout = (nodes: FaceGraphNodeDto[], edges: FaceGraphEdgeDto[]) =>
+  createLayout(nodes, edges).getPositions();
 
 type FaceBox = Pick<
   FaceGroupFaceDto,
@@ -173,3 +203,15 @@ export const findMergeTarget = (nodes: FaceGraphNodeDto[]) =>
     .filter((node) => !isUnassigned(node))
     .toSorted((a, b) => Number(isUnnamed(a)) - Number(isUnnamed(b)) || b.assetCount - a.assetCount)
     .at(0);
+
+export const SLIDER_STEPS = 100;
+
+/**
+ * Most people have few photos and a few people have very many, so the photo slider is
+ * logarithmic: position 0 is one photo and the last position is the largest person.
+ */
+export const sliderToPhotos = (position: number, limit: number) =>
+  Math.round(Math.max(limit, 1) ** (Math.min(Math.max(position, 0), SLIDER_STEPS) / SLIDER_STEPS));
+
+export const photosToSlider = (photos: number, limit: number) =>
+  limit <= 1 ? 0 : Math.round((Math.log(Math.min(Math.max(photos, 1), limit)) / Math.log(limit)) * SLIDER_STEPS);
