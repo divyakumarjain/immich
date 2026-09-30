@@ -1,6 +1,7 @@
 import { FaceGraphNodeKind, type FaceGraphNodeDto } from '@immich/sdk';
 import {
   computeLayout,
+  createLayout,
   findMergeTarget,
   findNodeByName,
   getFaceCrop,
@@ -11,7 +12,9 @@ import {
   looksLikeSomeoneElse,
   matchesFilters,
   nodeRadius,
+  photosToSlider,
   searchNodes,
+  sliderToPhotos,
   type FaceGraphFilters,
 } from '$lib/utils/face-graph';
 
@@ -60,6 +63,12 @@ describe('face graph utils', () => {
       const unassigned = node('a', { kind: FaceGraphNodeKind.Unassigned });
       expect(matchesFilters(unassigned, filters)).toBe(false);
       expect(matchesFilters(unassigned, { ...filters, showUnassigned: true })).toBe(true);
+    });
+
+    it('should apply the maximum number of photos', () => {
+      expect(matchesFilters(node('a', { assetCount: 51 }), { ...filters, maxPhotos: 50 })).toBe(false);
+      expect(matchesFilters(node('a', { assetCount: 50 }), { ...filters, maxPhotos: 50 })).toBe(true);
+      expect(matchesFilters(node('a', { assetCount: 5000 }), filters)).toBe(true);
     });
 
     it('should apply the minimum number of photos', () => {
@@ -132,6 +141,21 @@ describe('face graph utils', () => {
       expect(distance(positions.get('a')!, positions.get('b')!)).toBeLessThan(
         distance(positions.get('a')!, positions.get('c')!),
       );
+    });
+
+    it('should keep a moved node in place and make room for it', () => {
+      const nodes = [node('a', { x: -1, y: 0, assetCount: 100 }), node('b', { x: 1, y: 0, assetCount: 100 })];
+      const layout = createLayout(nodes, []);
+      const target = layout.getPositions().get('b')!;
+
+      layout.pin('a', target);
+      while (layout.step()) {
+        // let the layout settle
+      }
+
+      const positions = layout.getPositions();
+      expect(positions.get('a')).toEqual(target);
+      expect(distance(positions.get('a')!, positions.get('b')!)).toBeGreaterThan(39);
     });
 
     it('should ignore links to unknown nodes', () => {
@@ -229,6 +253,25 @@ describe('face graph utils', () => {
     it('should otherwise pick the person with the most photos', () => {
       const nodes = [node('a', { assetCount: 5 }), node('b', { assetCount: 100 })];
       expect(findMergeTarget(nodes)?.id).toBe('b');
+    });
+  });
+
+  describe('photo slider', () => {
+    it('should cover one photo up to the largest person', () => {
+      expect(sliderToPhotos(0, 2000)).toBe(1);
+      expect(sliderToPhotos(100, 2000)).toBe(2000);
+      expect(sliderToPhotos(50, 2000)).toBe(45);
+    });
+
+    it('should convert back to the same position', () => {
+      for (const position of [0, 40, 70, 100]) {
+        expect(photosToSlider(sliderToPhotos(position, 2000), 2000)).toBe(position);
+      }
+    });
+
+    it('should handle a library where nobody has more than one photo', () => {
+      expect(sliderToPhotos(100, 1)).toBe(1);
+      expect(photosToSlider(1, 1)).toBe(0);
     });
   });
 });

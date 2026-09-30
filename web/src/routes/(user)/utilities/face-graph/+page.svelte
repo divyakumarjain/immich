@@ -2,6 +2,7 @@
   import { goto } from '$app/navigation';
   import { shortcuts } from '$lib/actions/shortcut';
   import FaceGraphCanvas from '$lib/components/face-graph/FaceGraphCanvas.svelte';
+  import PhotoRangeSlider from '$lib/components/face-graph/PhotoRangeSlider.svelte';
   import UserPageLayout from '$lib/components/layouts/UserPageLayout.svelte';
   import { faceGraphManager } from '$lib/managers/face-graph-manager.svelte';
   import { Route } from '$lib/route';
@@ -127,17 +128,18 @@
       </div>
 
       <div class="flex items-center gap-2">
-        <input
-          id="face-graph-min-photos"
-          type="range"
-          min="1"
-          max={Math.min(faceGraphManager.maxPhotos, 200)}
-          bind:value={filters.minPhotos}
-          class="w-32 accent-primary"
+        <PhotoRangeSlider
+          limit={faceGraphManager.maxPhotos}
+          bind:min={filters.minPhotos}
+          bind:max={filters.maxPhotos}
+          minLabel={$t('face_graph_min_photos')}
+          maxLabel={$t('face_graph_max_photos')}
         />
-        <Label for="face-graph-min-photos" class="tabular-nums">
-          {$t('face_graph_min_photos', { values: { count: filters.minPhotos } })}
-        </Label>
+        <Text size="small" class="tabular-nums">
+          {filters.maxPhotos === undefined
+            ? $t('face_graph_photos_at_least', { values: { count: filters.minPhotos } })
+            : $t('face_graph_photos_range', { values: { min: filters.minPhotos, max: filters.maxPhotos } })}
+        </Text>
       </div>
     </div>
 
@@ -162,6 +164,7 @@
             onSelect={(node, options) => faceGraphManager.select(node.id, options)}
             {onOpen}
             onClear={() => faceGraphManager.clearSelection()}
+            onMove={(node, position) => faceGraphManager.moveNode(node.id, position)}
           >
             {#snippet hoverCard(node)}
               <FaceGraphHoverCard {node} />

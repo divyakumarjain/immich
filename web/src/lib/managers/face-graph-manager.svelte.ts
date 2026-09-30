@@ -1,10 +1,11 @@
 import { getFaceGraph, type FaceGraphEdgeDto, type FaceGraphNodeDto } from '@immich/sdk';
 import {
-  computeLayout,
+  createLayout,
   getNeighbors,
   getWorkQueue,
   matchesFilters,
   type FaceGraphFilters,
+  type FaceGraphLayout,
   type FaceGraphPosition,
 } from '$lib/utils/face-graph';
 
@@ -14,6 +15,8 @@ class FaceGraphManager {
   #positions = $state.raw(new Map<string, FaceGraphPosition>());
   #selectedIds = $state.raw<string[]>([]);
   #focus = $state.raw<{ id: string }>();
+  #layout: FaceGraphLayout | undefined;
+  #frame: number | undefined;
   #isLoaded = false;
   #hasUnassigned = false;
 
@@ -57,7 +60,12 @@ class FaceGraphManager {
     this.isLoading = true;
     try {
       const { nodes, edges } = await getFaceGraph({ withHidden: true, withUnassigned });
-      this.#positions = computeLayout(nodes, edges);
+      if (this.#frame !== undefined) {
+        cancelAnimationFrame(this.#frame);
+        this.#frame = undefined;
+      }
+      this.#layout = createLayout(nodes, edges);
+      this.#positions = this.#layout.getPositions();
       this.#nodes = nodes;
       this.#edges = edges;
       this.#selectedIds = this.#selectedIds.filter((id) => this.nodeById.has(id));
@@ -71,6 +79,27 @@ class FaceGraphManager {
   /** the next load fetches the graph again, e.g. after faces were moved between people */
   invalidate() {
     this.#isLoaded = false;
+  }
+
+  /** moves a node, it stays where it is dropped and the other nodes make room */
+  moveNode(id: string, position: FaceGraphPosition) {
+    if (!this.#layout) {
+      return;
+    }
+    this.#layout.pin(id, position);
+    this.#frame ??= requestAnimationFrame(() => this.#animate());
+  }
+
+  #animate() {
+    this.#frame = undefined;
+    if (!this.#layout) {
+      return;
+    }
+    const isMoving = this.#layout.step();
+    this.#positions = this.#layout.getPositions();
+    if (isMoving) {
+      this.#frame = requestAnimationFrame(() => this.#animate());
+    }
   }
 
   select(id: string, { additive = false }: { additive?: boolean } = {}) {
