@@ -85,6 +85,8 @@
     const ratio = window.devicePixelRatio || 1;
     const primary = getComputedStyle(primaryProbe).color;
     const text = getComputedStyle(canvas).color;
+    const background = getComputedStyle(document.body).backgroundColor;
+    const labels: { name: string; x: number; y: number; maxWidth: number }[] = [];
     const { k } = transform;
 
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
@@ -159,11 +161,20 @@
         context.stroke();
       }
 
-      if (!node.name || radius < LABEL_MIN_RADIUS) {
-        continue;
+      if (node.name && radius >= LABEL_MIN_RADIUS) {
+        labels.push({ name: node.name, x, y: y + radius + 6, maxWidth: Math.max(radius * 3, 80) });
       }
-      context.fillStyle = text;
-      context.fillText(node.name, x, y + radius + 6, Math.max(radius * 3, 80));
+    }
+
+    // names are drawn last so they are not covered by other people
+    context.globalAlpha = 1;
+    context.lineJoin = 'round';
+    context.lineWidth = 3;
+    context.strokeStyle = background;
+    context.fillStyle = text;
+    for (const { name, x, y, maxWidth } of labels) {
+      context.strokeText(name, x, y, maxWidth);
+      context.fillText(name, x, y, maxWidth);
     }
 
     context.globalAlpha = 1;

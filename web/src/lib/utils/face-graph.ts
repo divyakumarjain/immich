@@ -1,4 +1,4 @@
-import type { FaceGraphEdgeDto, FaceGraphNodeDto } from '@immich/sdk';
+import type { FaceGraphEdgeDto, FaceGraphNodeDto, FaceGroupDto, FaceGroupFaceDto } from '@immich/sdk';
 import { forceCollide, forceLink, forceSimulation, forceX, forceY } from 'd3-force';
 import { normalizeSearchString } from '$lib/utils/string-utils';
 
@@ -99,3 +99,47 @@ export const computeLayout = (nodes: FaceGraphNodeDto[], edges: FaceGraphEdgeDto
 
   return new Map<string, FaceGraphPosition>(simulationNodes.map(({ id, x, y }) => [id, { x, y }]));
 };
+
+type FaceBox = Pick<
+  FaceGroupFaceDto,
+  'imageWidth' | 'imageHeight' | 'boundingBoxX1' | 'boundingBoxY1' | 'boundingBoxX2' | 'boundingBoxY2'
+>;
+
+// how much of the surroundings of a face is shown, relative to the size of the face
+const FACE_CROP_PADDING = 1.5;
+// faces smaller than this part of the image are too blurry in a thumbnail
+const FACE_THUMBNAIL_MIN_RATIO = 0.3;
+
+/** the square around a face, in pixels of the image the face was detected in */
+export const getFaceCrop = (face: FaceBox) => {
+  const width = face.boundingBoxX2 - face.boundingBoxX1;
+  const height = face.boundingBoxY2 - face.boundingBoxY1;
+  const size = Math.max(1, Math.min(Math.max(width, height) * FACE_CROP_PADDING, face.imageWidth, face.imageHeight));
+  const centerX = (face.boundingBoxX1 + face.boundingBoxX2) / 2;
+  const centerY = (face.boundingBoxY1 + face.boundingBoxY2) / 2;
+
+  return {
+    size,
+    x: Math.min(Math.max(centerX - size / 2, 0), Math.max(face.imageWidth - size, 0)),
+    y: Math.min(Math.max(centerY - size / 2, 0), Math.max(face.imageHeight - size, 0)),
+  };
+};
+
+/** positions the whole image inside a square tile so only the face is visible */
+export const getFaceCropStyle = (face: FaceBox, tileSize: number) => {
+  const crop = getFaceCrop(face);
+  const scale = tileSize / crop.size;
+  return {
+    width: face.imageWidth * scale,
+    height: face.imageHeight * scale,
+    left: -crop.x * scale,
+    top: -crop.y * scale,
+  };
+};
+
+export const isLargeFace = (face: FaceBox) =>
+  getFaceCrop(face).size / Math.max(1, Math.min(face.imageWidth, face.imageHeight)) >= FACE_THUMBNAIL_MIN_RATIO;
+
+/** a group is suspicious when it looks more like someone else than like the rest of the person */
+export const looksLikeSomeoneElse = (group: Pick<FaceGroupDto, 'closestPerson' | 'distanceToMain'>) =>
+  !!group.closestPerson && group.closestPerson.distance < group.distanceToMain;

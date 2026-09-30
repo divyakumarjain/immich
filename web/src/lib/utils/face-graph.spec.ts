@@ -1,8 +1,12 @@
 import { FaceGraphNodeKind, type FaceGraphNodeDto } from '@immich/sdk';
 import {
   computeLayout,
+  getFaceCrop,
+  getFaceCropStyle,
   getNeighbors,
   getWorkQueue,
+  isLargeFace,
+  looksLikeSomeoneElse,
   matchesFilters,
   nodeRadius,
   searchNodes,
@@ -124,6 +128,68 @@ describe('face graph utils', () => {
     it('should ignore links to unknown nodes', () => {
       const positions = computeLayout([node('a')], [{ source: 'a', target: 'missing', distance: 0.1 }]);
       expect(positions.size).toBe(1);
+    });
+  });
+
+  describe('getFaceCrop', () => {
+    const face = {
+      imageWidth: 1000,
+      imageHeight: 800,
+      boundingBoxX1: 400,
+      boundingBoxY1: 300,
+      boundingBoxX2: 500,
+      boundingBoxY2: 420,
+    };
+
+    it('should return a padded square around the face', () => {
+      expect(getFaceCrop(face)).toEqual({ size: 180, x: 360, y: 270 });
+    });
+
+    it('should stay inside the image', () => {
+      const crop = getFaceCrop({ ...face, boundingBoxX1: 0, boundingBoxY1: 0, boundingBoxX2: 100, boundingBoxY2: 100 });
+      expect(crop).toEqual({ size: 150, x: 0, y: 0 });
+
+      const corner = getFaceCrop({
+        ...face,
+        boundingBoxX1: 900,
+        boundingBoxY1: 700,
+        boundingBoxX2: 1000,
+        boundingBoxY2: 800,
+      });
+      expect(corner).toEqual({ size: 150, x: 850, y: 650 });
+    });
+
+    it('should not be larger than the image', () => {
+      const crop = getFaceCrop({
+        ...face,
+        boundingBoxX1: 0,
+        boundingBoxY1: 0,
+        boundingBoxX2: 1000,
+        boundingBoxY2: 800,
+      });
+      expect(crop).toEqual({ size: 800, x: 100, y: 0 });
+    });
+
+    it('should scale the image so the crop fills the tile', () => {
+      expect(getFaceCropStyle(face, 90)).toEqual({ width: 500, height: 400, left: -180, top: -135 });
+    });
+
+    it('should detect faces that are large enough for a thumbnail', () => {
+      expect(isLargeFace(face)).toBe(false);
+      expect(isLargeFace({ ...face, boundingBoxX2: 700, boundingBoxY2: 600 })).toBe(true);
+    });
+  });
+
+  describe('looksLikeSomeoneElse', () => {
+    const closestPerson = { id: 'b', name: 'Bob', distance: 0.3 };
+
+    it('should be true when another person is closer than the largest group', () => {
+      expect(looksLikeSomeoneElse({ closestPerson, distanceToMain: 0.6 })).toBe(true);
+    });
+
+    it('should be false otherwise', () => {
+      expect(looksLikeSomeoneElse({ closestPerson, distanceToMain: 0.2 })).toBe(false);
+      expect(looksLikeSomeoneElse({ closestPerson: null, distanceToMain: 0.6 })).toBe(false);
     });
   });
 });
