@@ -19,6 +19,8 @@
     onOpen: (node: FaceGraphNodeDto) => void;
     onClear: () => void;
     onMove: (node: FaceGraphNodeDto, position: FaceGraphPosition) => void;
+    /** a person was dropped onto another person */
+    onDrop: (node: FaceGraphNodeDto, target: FaceGraphNodeDto) => void;
     hoverCard?: Snippet<[FaceGraphNodeDto]>;
   };
 
@@ -34,6 +36,7 @@
     onOpen,
     onClear,
     onMove,
+    onDrop,
     hoverCard,
   }: Props = $props();
 
@@ -57,6 +60,8 @@
   let zoomBehavior: ZoomBehavior<HTMLCanvasElement, unknown> | undefined;
   let frame: number | undefined;
   let hasFit = false;
+  // the person that is being dragged: it follows the pointer, the others stay where they are
+  let drag: { id: string; position: FaceGraphPosition; targetId?: string } | undefined;
   // eslint-disable-next-line svelte/prefer-svelte-reactivity
   const images = new Map<string, HTMLImageElement>();
 
@@ -64,6 +69,10 @@
   const sortedNodes = $derived(nodes.toSorted((a, b) => b.assetCount - a.assetCount));
   const visibleIds = $derived(new Set(nodes.map(({ id }) => id)));
   const selection = $derived(new Set(selectedIds));
+
+  const positionOf = (id: string) => (drag?.id === id ? drag.position : positions.get(id));
+  // groups of unassigned faces are not people yet, so they cannot be merged
+  const isMergeable = (node: FaceGraphNodeDto) => node.kind === FaceGraphNodeKind.Person;
 
   const getImage = (node: FaceGraphNodeDto) => {
     const key = `${node.id}-${node.updatedAt}`;
@@ -105,8 +114,8 @@
     if (showEdges && k >= EDGE_MIN_SCALE) {
       context.strokeStyle = text;
       for (const { source, target, distance } of edges) {
-        const from = positions.get(source);
-        const to = positions.get(target);
+        const from = positionOf(source);
+        const to = positionOf(target);
         if (!from || !to || !visibleIds.has(source) || !visibleIds.has(target)) {
           continue;
         }
@@ -123,22 +132,23 @@
     context.textBaseline = 'top';
     context.font = '12px sans-serif';
 
-    for (const node of sortedNodes) {
-      const position = positions.get(node.id);
+    const drawNode = (node: FaceGraphNodeDto) => {
+      const position = positionOf(node.id);
       if (!position) {
-        continue;
+        return;
       }
 
       const x = transform.applyX(position.x);
       const y = transform.applyY(position.y);
       const radius = nodeRadius(node.assetCount) * k;
       if (x + radius < 0 || x - radius > width || y + radius < 0 || y - radius > height) {
-        continue;
+        return;
       }
 
       const unnamed = isUnnamed(node);
       const isSelected = selection.has(node.id);
-      context.globalAlpha = node.isHidden ? 0.35 : 1;
+      const isDropTarget = drag?.targetId === node.id;
+      context.globalAlpha = node.isHidden ? 0.35 : drag?.id === node.id ? 0.8 : 1;
       context.setLineDash(node.kind === FaceGraphNodeKind.Unassigned ? [4, 3] : []);
       context.beginPath();
       context.arc(x, y, radius, 0, Math.PI * 2);
@@ -179,18 +189,30 @@
         context.stroke();
       }
 
-      if (isSelected) {
+      if (isSelected || isDropTarget) {
         context.setLineDash([]);
+        context.globalAlpha = 1;
         context.strokeStyle = primary;
-        context.lineWidth = 3;
+        context.lineWidth = isDropTarget ? 6 : 3;
         context.beginPath();
-        context.arc(x, y, radius + 4, 0, Math.PI * 2);
+        context.arc(x, y, radius + (isDropTarget ? 7 : 4), 0, Math.PI * 2);
         context.stroke();
       }
 
       if (node.name && radius >= LABEL_MIN_RADIUS) {
         labels.push({ name: node.name, x, y: y + radius + 6, maxWidth: Math.max(radius * 3, 80) });
       }
+    };
+
+    // the dragged person is drawn last, on top of the person it may be dropped on
+    const dragged = drag && sortedNodes.find(({ id }) => id === drag?.id);
+    for (const node of sortedNodes) {
+      if (node !== dragged) {
+        drawNode(node);
+      }
+    }
+    if (dragged) {
+      drawNode(dragged);
     }
 
     // names are drawn last so they are not covered by other people
@@ -213,10 +235,13 @@
     frame ??= requestAnimationFrame(draw);
   }
 
-  const findNode = (x: number, y: number) => {
+  const findNode = (x: number, y: number, excludeId?: string) => {
     const [graphX, graphY] = transform.invert([x, y]);
     for (let i = sortedNodes.length - 1; i >= 0; i--) {
       const node = sortedNodes[i];
+      if (node.id === excludeId) {
+        continue;
+      }
       const position = positions.get(node.id);
       // dots stay clickable when zoomed out
       const radius = Math.max(nodeRadius(node.assetCount), 5 / transform.k);
@@ -307,7 +332,13 @@
       if (isDragging) {
         hovered = undefined;
         const [graphX, graphY] = transform.invert([pointer.x, pointer.y]);
-        onMove(pressed.node, { x: graphX + pressed.offsetX, y: graphY + pressed.offsetY });
+        const target = isMergeable(pressed.node) ? findNode(pointer.x, pointer.y, pressed.node.id) : undefined;
+        drag = {
+          id: pressed.node.id,
+          position: { x: graphX + pressed.offsetX, y: graphY + pressed.offsetY },
+          targetId: target && isMergeable(target) ? target.id : undefined,
+        };
+        scheduleDraw();
       }
     };
 
@@ -319,6 +350,17 @@
       element.releasePointerCapture(event.pointerId);
       // the click that follows a drag must not change the selection
       wasDragged = isDragging;
+      if (drag) {
+        const target = sortedNodes.find(({ id }) => id === drag?.targetId);
+        if (target) {
+          // dropped onto another person: the person goes back to its place, the merge decides the rest
+          onDrop(pressed.node, target);
+        } else {
+          onMove(pressed.node, drag.position);
+        }
+        drag = undefined;
+        scheduleDraw();
+      }
       pressed = undefined;
       isDragging = false;
     };

@@ -177,6 +177,7 @@
             {onOpen}
             onClear={() => faceGraphManager.clearSelection()}
             onMove={(node, position) => faceGraphManager.moveNode(node.id, position)}
+            onDrop={(node, target) => selectionPanel?.mergeDropped(node, target)}
           >
             {#snippet hoverCard(node)}
               <FaceGraphHoverCard {node} />
