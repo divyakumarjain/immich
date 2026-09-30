@@ -28,7 +28,7 @@
   };
 
   const onMove = async (target: { id: string }, faces: FaceGroupFaceDto[]) => {
-    const remaining = currentFaces.find(({ id }) => !faces.some((face) => face.id === id));
+    const remaining = currentFaces.find(({ id }) => faces.every((face) => face.id !== id));
     for (let i = 0; i < faces.length; i += MOVE_CONCURRENCY) {
       await Promise.all(
         faces.slice(i, i + MOVE_CONCURRENCY).map(({ id }) => reassignFacesById({ id: target.id, faceDto: { id } })),
