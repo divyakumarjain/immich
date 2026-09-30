@@ -9,6 +9,9 @@ import {
   type FaceGraphPosition,
 } from '$lib/utils/face-graph';
 
+// rearranging runs several steps per frame so it settles in about a second
+const REARRANGE_TICKS_PER_FRAME = 4;
+
 class FaceGraphManager {
   #nodes = $state.raw<FaceGraphNodeDto[]>([]);
   #edges = $state.raw<FaceGraphEdgeDto[]>([]);
@@ -17,6 +20,8 @@ class FaceGraphManager {
   #focus = $state.raw<{ id: string }>();
   #layout: FaceGraphLayout | undefined;
   #frame: number | undefined;
+  #isRearranging = false;
+  #rearranged = $state.raw<object>();
   #isLoaded = false;
   #hasUnassigned = false;
 
@@ -50,6 +55,11 @@ class FaceGraphManager {
     return this.#focus;
   }
 
+  /** changes to a new object every time the graph has settled after it was rearranged */
+  get rearranged() {
+    return this.#rearranged;
+  }
+
   async load({ force = false }: { force?: boolean } = {}) {
     const withUnassigned = this.filters.showUnassigned;
     // grouping the unassigned faces is slow, so they are only loaded when they are shown
@@ -64,10 +74,10 @@ class FaceGraphManager {
         cancelAnimationFrame(this.#frame);
         this.#frame = undefined;
       }
-      this.#layout = createLayout(nodes, edges);
-      this.#positions = this.#layout.getPositions();
       this.#nodes = nodes;
       this.#edges = edges;
+      this.#layout = createLayout(nodes, edges, this.visibleNodes);
+      this.#positions = this.#layout.getPositions();
       this.#selectedIds = this.#selectedIds.filter((id) => this.nodeById.has(id));
       this.#isLoaded = true;
       this.#hasUnassigned = withUnassigned;
@@ -95,11 +105,27 @@ class FaceGraphManager {
     if (!this.#layout) {
       return;
     }
-    const isMoving = this.#layout.step();
+    const isMoving = this.#layout.step(this.#isRearranging ? REARRANGE_TICKS_PER_FRAME : 1);
     this.#positions = this.#layout.getPositions();
     if (isMoving) {
       this.#frame = requestAnimationFrame(() => this.#animate());
+    } else if (this.#isRearranging) {
+      this.#isRearranging = false;
+      this.#rearranged = {};
     }
+  }
+
+  /**
+   * Lays the graph out again for the people that are shown, so filtered people leave no gaps.
+   * Call it whenever `visibleNodes` changes.
+   */
+  rearrange() {
+    if (!this.#layout?.show(this.visibleNodes)) {
+      return;
+    }
+    this.#isRearranging = true;
+    this.#positions = this.#layout.getPositions();
+    this.#frame ??= requestAnimationFrame(() => this.#animate());
   }
 
   select(id: string, { additive = false }: { additive?: boolean } = {}) {
