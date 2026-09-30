@@ -45,7 +45,7 @@ export const matchesFilters = (node: FaceGraphNodeDto, filters: FaceGraphFilters
 
 /** named people matching the search, the ones with the most photos first */
 export const searchNodes = (nodes: FaceGraphNodeDto[], search: string) => {
-  const query = normalizeSearchString(search);
+  const query = normalizeSearchString(search.trim());
   if (!query) {
     return [];
   }
@@ -158,7 +158,7 @@ export const looksLikeSomeoneElse = (group: Pick<FaceGroupDto, 'closestPerson' |
 
 /** another person with the same name, ignoring case and accents */
 export const findNodeByName = (nodes: FaceGraphNodeDto[], name: string, excludeId: string) => {
-  const query = normalizeSearchString(name);
+  const query = normalizeSearchString(name.trim());
   if (!query) {
     return;
   }
