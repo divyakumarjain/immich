@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Route } from '$lib/route';
+  import { getPeopleThumbnailUrl } from '$lib/utils';
   import { looksLikeSomeoneElse } from '$lib/utils/face-graph';
   import type { FaceGroupDto } from '@immich/sdk';
   import { Button, Checkbox, Icon, Label, Text } from '@immich/ui';
@@ -89,11 +90,30 @@
     {/if}
 
     {#if suggestion}
-      <span class="flex items-center gap-1 text-sm">
+      <!-- the suggested person: a small picture, a larger one on hover, and a link to their faces -->
+      <a
+        href={Route.faceGraphPerson(suggestion)}
+        title={$t('face_graph_review_faces')}
+        class="group/suggestion relative flex items-center gap-2 rounded-full pe-2 text-sm hover:bg-subtle focus-visible:bg-subtle"
+      >
         <Icon icon={mdiAlertOutline} size="18" class="text-warning" />
-        {$t('face_graph_looks_like', { values: { name: suggestion.name || null } })}
+        <img
+          src={getPeopleThumbnailUrl({ id: suggestion.id })}
+          alt=""
+          loading="lazy"
+          class="size-7 rounded-full object-cover"
+        />
+        <span class="underline decoration-dotted underline-offset-4">
+          {$t('face_graph_looks_like', { values: { name: suggestion.name || null } })}
+        </span>
         <span class="text-xs tabular-nums opacity-70">({suggestion.distance.toFixed(2)})</span>
-      </span>
+        <img
+          src={getPeopleThumbnailUrl({ id: suggestion.id })}
+          alt=""
+          loading="lazy"
+          class="pointer-events-none absolute inset-s-0 top-full z-20 mt-2 hidden size-40 max-w-none rounded-2xl border bg-light object-cover shadow-lg group-hover/suggestion:block group-focus-visible/suggestion:block"
+        />
+      </a>
       <Button
         size="small"
         variant="outline"

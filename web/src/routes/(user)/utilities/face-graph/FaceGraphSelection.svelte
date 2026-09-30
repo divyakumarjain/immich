@@ -5,7 +5,8 @@
   import { findMergeTarget, findNodeByName, isUnassigned } from '$lib/utils/face-graph';
   import { handleError } from '$lib/utils/handle-error';
   import { mergePeople, updatePerson, type FaceGraphNodeDto } from '@immich/sdk';
-  import { Button, Input, modalManager, Text, toastManager } from '@immich/ui';
+  import PersonNameInput from '$lib/components/face-graph/PersonNameInput.svelte';
+  import { Button, modalManager, Text, toastManager } from '@immich/ui';
   import { mdiCallMerge, mdiEyeOffOutline, mdiEyeOutline, mdiFaceRecognition } from '@mdi/js';
   import { t } from 'svelte-i18n';
 
@@ -16,13 +17,12 @@
   );
   const node = $derived(selectedNodes.length === 1 ? selectedNodes[0] : undefined);
 
-  let name = $derived(node?.name ?? '');
   let isBusy = $state(false);
   let nameInput = $state<HTMLInputElement | null>(null);
 
   export const focusName = () => nameInput?.focus();
 
-  const merge = async (target: FaceGraphNodeDto, others: FaceGraphNodeDto[]) => {
+  const merge = async (target: Pick<FaceGraphNodeDto, 'id' | 'name'>, others: FaceGraphNodeDto[]) => {
     const isConfirmed = await modalManager.showDialog({
       prompt: $t('face_graph_merge_confirm', { values: { count: others.length, name: target.name || null } }),
     });
@@ -58,10 +58,31 @@
     }
   };
 
-  const onRename = async (event: SubmitEvent) => {
-    event.preventDefault();
-    const newName = name.trim();
-    if (!node || newName === node.name) {
+  /** merges the selected person into an existing one, e.g. one picked from the name suggestions */
+  const mergeInto = async (target: Pick<FaceGraphNodeDto, 'id' | 'name'>) => {
+    if (!node) {
+      return false;
+    }
+
+    isBusy = true;
+    try {
+      if (await merge(target, [node])) {
+        // the target may not be in the graph, e.g. when it has no visible photos
+        if (faceGraphManager.nodeById.has(target.id)) {
+          faceGraphManager.focusOn(target.id);
+        }
+        return true;
+      }
+    } catch (error) {
+      handleError(error, $t('cannot_merge_people'));
+    } finally {
+      isBusy = false;
+    }
+    return false;
+  };
+
+  const onRename = async (newName: string) => {
+    if (!node) {
       return;
     }
 
@@ -116,17 +137,16 @@
         {$t('face_graph_review_faces')}
       </Button>
     {:else}
-      <form onsubmit={onRename} class="flex items-center gap-2" autocomplete="off">
-        <Input
+      {#key node.id}
+        <PersonNameInput
           bind:ref={nameInput}
-          bind:value={name}
-          size="small"
-          placeholder={$t('add_a_name')}
-          aria-label={$t('name')}
+          personId={node.id}
+          name={node.name}
           disabled={isBusy}
+          onSave={onRename}
+          onPick={mergeInto}
         />
-        <Button type="submit" size="small" disabled={isBusy || name.trim() === node.name}>{$t('save')}</Button>
-      </form>
+      {/key}
 
       <div class="flex flex-wrap gap-2">
         <Button size="small" color="secondary" leadingIcon={mdiFaceRecognition} href={Route.faceGraphPerson(node)}>

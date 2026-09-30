@@ -5,8 +5,17 @@
   import { getPeopleThumbnailUrl } from '$lib/utils';
   import { faceGraphManager } from '$lib/managers/face-graph-manager.svelte';
   import { handleError } from '$lib/utils/handle-error';
-  import { getFaceGroups, reassignFaces, updatePerson, type FaceGroupFaceDto } from '@immich/sdk';
-  import { Button, Input, Text, toastManager } from '@immich/ui';
+  import { goto } from '$app/navigation';
+  import PersonNameInput from '$lib/components/face-graph/PersonNameInput.svelte';
+  import {
+    getFaceGroups,
+    mergePeople,
+    reassignFaces,
+    updatePerson,
+    type FaceGroupFaceDto,
+    type PersonResponseDto,
+  } from '@immich/sdk';
+  import { Button, modalManager, Text, toastManager } from '@immich/ui';
   import { mdiArrowLeft, mdiFaceManOutline } from '@mdi/js';
   import { t } from 'svelte-i18n';
   import type { PageData } from './$types';
@@ -18,20 +27,36 @@
   let { data }: Props = $props();
 
   let person = $derived(data.person);
-  let name = $derived(data.person.name);
   let isSaving = $state(false);
 
-  const onRename = async (event: SubmitEvent) => {
-    event.preventDefault();
-    const newName = name.trim();
-    if (newName === person.name) {
-      return;
+  /** this person turns out to be someone who already exists: merge and continue with that person */
+  const onMergeInto = async (target: PersonResponseDto) => {
+    const isConfirmed = await modalManager.showDialog({
+      prompt: $t('face_graph_merge_confirm', { values: { count: 1, name: target.name || null } }),
+    });
+    if (!isConfirmed) {
+      return false;
     }
 
     isSaving = true;
     try {
+      await mergePeople({ mergePersonDto: { ids: [target.id, person.id] } });
+      faceGraphManager.invalidate();
+      toastManager.primary($t('merge_people_successfully'));
+      await goto(Route.faceGraphPerson(target));
+      return true;
+    } catch (error) {
+      handleError(error, $t('cannot_merge_people'));
+      return false;
+    } finally {
+      isSaving = false;
+    }
+  };
+
+  const onRename = async (newName: string) => {
+    isSaving = true;
+    try {
       person = await updatePerson({ id: person.id, personUpdateDto: { name: newName } });
-      name = person.name;
       faceGraphManager.updateNode(person.id, { name: person.name });
       toastManager.primary($t('change_name_successfully'));
     } catch (error) {
@@ -80,18 +105,13 @@
         <div class="flex items-center gap-3">
           <img src={getPeopleThumbnailUrl(person)} alt={person.name} class="size-16 rounded-full object-cover" />
           <div>
-            <form onsubmit={onRename} class="flex items-center gap-2" autocomplete="off">
-              <Input
-                bind:value={name}
-                size="small"
-                placeholder={$t('add_a_name')}
-                aria-label={$t('name')}
-                disabled={isSaving}
-              />
-              <Button type="submit" size="small" disabled={isSaving || name.trim() === person.name}>
-                {$t('save')}
-              </Button>
-            </form>
+            <PersonNameInput
+              personId={person.id}
+              name={person.name}
+              disabled={isSaving}
+              onSave={onRename}
+              onPick={onMergeInto}
+            />
             <Text size="small" color="muted">{$t('face_graph_faces', { values: { count: faceCount } })}</Text>
           </div>
         </div>
