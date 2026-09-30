@@ -2,7 +2,7 @@
   import { faceGraphManager } from '$lib/managers/face-graph-manager.svelte';
   import { Route } from '$lib/route';
   import FaceGraphNodeThumbnail from '$lib/components/face-graph/FaceGraphNodeThumbnail.svelte';
-  import { findMergeTarget, findNodeByName, isUnassigned } from '$lib/utils/face-graph';
+  import { findMergeTarget, findNodeByName, isUnassigned, isUnnamed } from '$lib/utils/face-graph';
   import { handleError } from '$lib/utils/handle-error';
   import { mergePeople, updatePerson, type FaceGraphNodeDto } from '@immich/sdk';
   import PersonNameInput from '$lib/components/face-graph/PersonNameInput.svelte';
@@ -37,6 +37,21 @@
     );
     toastManager.primary($t('merge_people_successfully'));
     return true;
+  };
+
+  /** one person was dragged onto another in the graph */
+  export const mergeDropped = async (dropped: FaceGraphNodeDto, onto: FaceGraphNodeDto) => {
+    // the person that was dropped onto is kept, unless that would lose the only name
+    const [target, other] = isUnnamed(onto) && !isUnnamed(dropped) ? [dropped, onto] : [onto, dropped];
+
+    isBusy = true;
+    try {
+      await merge(target, [other]);
+    } catch (error) {
+      handleError(error, $t('cannot_merge_people'));
+    } finally {
+      isBusy = false;
+    }
   };
 
   const onMerge = async () => {
