@@ -21,6 +21,7 @@ class FaceGraphManager {
   #layout: FaceGraphLayout | undefined;
   #frame: number | undefined;
   #isRearranging = false;
+  #layoutFilters = '';
   #rearranged = $state.raw<object>();
   #isLoaded = false;
   #hasUnassigned = false;
@@ -77,6 +78,7 @@ class FaceGraphManager {
       this.#nodes = nodes;
       this.#edges = edges;
       this.#layout = createLayout(nodes, edges, this.visibleNodes);
+      this.#layoutFilters = JSON.stringify(this.filters);
       this.#positions = this.#layout.getPositions();
       this.#selectedIds = this.#selectedIds.filter((id) => this.nodeById.has(id));
       this.#isLoaded = true;
@@ -116,14 +118,18 @@ class FaceGraphManager {
   }
 
   /**
-   * Lays the graph out again for the people that are shown, so filtered people leave no gaps.
-   * Call it whenever `visibleNodes` changes.
+   * Keeps the layout in step with the people that are shown. Call it whenever `visibleNodes` changes.
+   * A changed filter lays the graph out again, so filtered people leave no gaps. An edit, such as naming
+   * someone while only unnamed people are shown, just takes that person out and leaves the rest in place.
    */
   rearrange() {
-    if (!this.#layout?.show(this.visibleNodes)) {
+    const filters = JSON.stringify(this.filters);
+    const isFilterChange = filters !== this.#layoutFilters;
+    this.#layoutFilters = filters;
+    if (!this.#layout?.show(this.visibleNodes, { keepPlaces: !isFilterChange })) {
       return;
     }
-    this.#isRearranging = true;
+    this.#isRearranging ||= isFilterChange;
     this.#positions = this.#layout.getPositions();
     this.#frame ??= requestAnimationFrame(() => this.#animate());
   }

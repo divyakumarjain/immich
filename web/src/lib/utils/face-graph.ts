@@ -122,11 +122,15 @@ export const createLayout = (
     .force('y', forceY<SimulationNode>((node) => node.seedY).strength(0.05))
     .stop();
 
+  let scale = 1;
+
   /**
    * Lays out the given nodes only: hidden nodes leave no gaps and the graph shrinks to fit the rest.
+   * With `keepPlaces` the nodes that stay are not moved on purpose, which suits a single person that
+   * disappears after an edit: only nodes that are new or have grown make their neighbours move aside.
    * Returns whether anything changed.
    */
-  const show = (visible: FaceGraphNodeDto[]) => {
+  const show = (visible: FaceGraphNodeDto[], { keepPlaces = false }: { keepPlaces?: boolean } = {}) => {
     const next = visible.map((node) => byId.get(node.id)).filter((node) => !!node);
     const radii = visible.map((node) => nodeRadius(node.assetCount));
     const isSame =
@@ -137,9 +141,13 @@ export const createLayout = (
     }
 
     const previous = new Set(shown);
-    const totalArea = radii.reduce((sum, radius) => sum + Math.PI * (radius + NODE_PADDING) ** 2, 0);
-    const scale = Math.sqrt(totalArea) * 1.5;
+    if (!keepPlaces) {
+      const totalArea = radii.reduce((sum, radius) => sum + Math.PI * (radius + NODE_PADDING) ** 2, 0);
+      scale = Math.sqrt(totalArea) * 1.5;
+    }
+    let needsRoom = false;
     for (const [index, node] of next.entries()) {
+      needsRoom ||= !previous.has(node) || radii[index] > node.radius;
       node.radius = radii[index];
       node.seedX = node.unitX * scale;
       node.seedY = node.unitY * scale;
@@ -167,7 +175,11 @@ export const createLayout = (
     );
     simulation.force('x', forceX<SimulationNode>((node) => node.seedX).strength(0.05));
     simulation.force('y', forceY<SimulationNode>((node) => node.seedY).strength(0.05));
-    simulation.alpha(1);
+    if (!keepPlaces) {
+      simulation.alpha(1);
+    } else if (needsRoom) {
+      simulation.alpha(Math.max(simulation.alpha(), DRAG_ALPHA));
+    }
     return true;
   };
 
@@ -188,7 +200,9 @@ export const createLayout = (
     },
     /** advances the layout, returns whether it is still moving */
     step: (ticks = 1) => {
-      simulation.tick(ticks);
+      if (simulation.alpha() > simulation.alphaMin()) {
+        simulation.tick(ticks);
+      }
       return simulation.alpha() > simulation.alphaMin();
     },
   };
