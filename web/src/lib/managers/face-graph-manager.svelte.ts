@@ -15,9 +15,10 @@ class FaceGraphManager {
   #selectedIds = $state.raw<string[]>([]);
   #focus = $state.raw<{ id: string }>();
   #isLoaded = false;
+  #hasUnassigned = false;
 
   isLoading = $state(false);
-  filters = $state<FaceGraphFilters>({ unnamedOnly: false, showHidden: false, minPhotos: 1 });
+  filters = $state<FaceGraphFilters>({ unnamedOnly: false, showHidden: false, showUnassigned: false, minPhotos: 1 });
 
   readonly nodeById = $derived(new Map(this.#nodes.map((node) => [node.id, node])));
   readonly visibleNodes = $derived(this.#nodes.filter((node) => matchesFilters(node, this.filters)));
@@ -47,18 +48,21 @@ class FaceGraphManager {
   }
 
   async load({ force = false }: { force?: boolean } = {}) {
-    if (this.#isLoaded && !force) {
+    const withUnassigned = this.filters.showUnassigned;
+    // grouping the unassigned faces is slow, so they are only loaded when they are shown
+    if (this.#isLoaded && !force && (this.#hasUnassigned || !withUnassigned)) {
       return;
     }
 
     this.isLoading = true;
     try {
-      const { nodes, edges } = await getFaceGraph({ withHidden: true });
+      const { nodes, edges } = await getFaceGraph({ withHidden: true, withUnassigned });
       this.#positions = computeLayout(nodes, edges);
       this.#nodes = nodes;
       this.#edges = edges;
       this.#selectedIds = this.#selectedIds.filter((id) => this.nodeById.has(id));
       this.#isLoaded = true;
+      this.#hasUnassigned = withUnassigned;
     } finally {
       this.isLoading = false;
     }

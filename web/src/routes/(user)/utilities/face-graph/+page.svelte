@@ -5,7 +5,7 @@
   import UserPageLayout from '$lib/components/layouts/UserPageLayout.svelte';
   import { faceGraphManager } from '$lib/managers/face-graph-manager.svelte';
   import { Route } from '$lib/route';
-  import { searchNodes } from '$lib/utils/face-graph';
+  import { isUnassigned, searchNodes } from '$lib/utils/face-graph';
   import { handleError } from '$lib/utils/handle-error';
   import type { FaceGraphNodeDto } from '@immich/sdk';
   import { Button, Checkbox, IconButton, Input, Label, LoadingSpinner, Text } from '@immich/ui';
@@ -41,7 +41,8 @@
 
   onMount(() => load());
 
-  const onOpen = (node: FaceGraphNodeDto) => goto(Route.faceGraphPerson(node));
+  const onOpen = (node: FaceGraphNodeDto) =>
+    goto(isUnassigned(node) ? Route.faceGraphUnassigned(node) : Route.faceGraphPerson(node));
 
   const onSearch = (event: SubmitEvent) => {
     event.preventDefault();
@@ -109,6 +110,15 @@
       <div class="flex items-center gap-2">
         <Checkbox id="face-graph-show-hidden" bind:checked={filters.showHidden} />
         <Label for="face-graph-show-hidden">{$t('show_hidden_people')}</Label>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <Checkbox
+          id="face-graph-show-unassigned"
+          bind:checked={filters.showUnassigned}
+          onCheckedChange={() => load()}
+        />
+        <Label for="face-graph-show-unassigned">{$t('face_graph_show_unassigned')}</Label>
       </div>
 
       <div class="flex items-center gap-2">

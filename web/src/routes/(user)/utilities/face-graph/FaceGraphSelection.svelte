@@ -1,8 +1,8 @@
 <script lang="ts">
   import { faceGraphManager } from '$lib/managers/face-graph-manager.svelte';
   import { Route } from '$lib/route';
-  import { getPeopleThumbnailUrl } from '$lib/utils';
-  import { findMergeTarget, findNodeByName } from '$lib/utils/face-graph';
+  import FaceGraphNodeThumbnail from '$lib/components/face-graph/FaceGraphNodeThumbnail.svelte';
+  import { findMergeTarget, findNodeByName, isUnassigned } from '$lib/utils/face-graph';
   import { handleError } from '$lib/utils/handle-error';
   import { mergePeople, updatePerson, type FaceGraphNodeDto } from '@immich/sdk';
   import { Button, Input, modalManager, Text, toastManager } from '@immich/ui';
@@ -18,7 +18,7 @@
 
   let name = $derived(node?.name ?? '');
   let isBusy = $state(false);
-  let nameInput = $state<HTMLInputElement>();
+  let nameInput = $state<HTMLInputElement | null>(null);
 
   export const focusName = () => nameInput?.focus();
 
@@ -41,7 +41,7 @@
 
   const onMerge = async () => {
     const target = findMergeTarget(selectedNodes);
-    if (!target) {
+    if (!target || selectedNodes.some((node) => isUnassigned(node))) {
       return;
     }
 
@@ -104,53 +104,61 @@
 {#if node}
   <section class="flex flex-col gap-3 border-b p-3">
     <div class="flex items-center gap-3">
-      <img src={getPeopleThumbnailUrl(node)} alt={node.name} class="size-14 rounded-full object-cover" />
+      <FaceGraphNodeThumbnail {node} size={56} />
       <Text size="small" color="muted">
         {$t('face_graph_photos_and_faces', { values: { photos: node.assetCount, faces: node.faceCount } })}
       </Text>
     </div>
 
-    <form onsubmit={onRename} class="flex items-center gap-2" autocomplete="off">
-      <Input
-        bind:ref={nameInput}
-        bind:value={name}
-        size="small"
-        placeholder={$t('add_a_name')}
-        aria-label={$t('name')}
-        disabled={isBusy}
-      />
-      <Button type="submit" size="small" disabled={isBusy || name.trim() === node.name}>{$t('save')}</Button>
-    </form>
-
-    <div class="flex flex-wrap gap-2">
-      <Button size="small" color="secondary" leadingIcon={mdiFaceRecognition} href={Route.faceGraphPerson(node)}>
+    {#if isUnassigned(node)}
+      <Text size="small">{$t('face_graph_unassigned_hint')}</Text>
+      <Button size="small" leadingIcon={mdiFaceRecognition} href={Route.faceGraphUnassigned(node)}>
         {$t('face_graph_review_faces')}
       </Button>
-      <Button
-        size="small"
-        color="secondary"
-        variant="ghost"
-        leadingIcon={node.isHidden ? mdiEyeOutline : mdiEyeOffOutline}
-        disabled={isBusy}
-        onclick={onToggleHidden}
-      >
-        {node.isHidden ? $t('unhide_person') : $t('hide_person')}
-      </Button>
-    </div>
+    {:else}
+      <form onsubmit={onRename} class="flex items-center gap-2" autocomplete="off">
+        <Input
+          bind:ref={nameInput}
+          bind:value={name}
+          size="small"
+          placeholder={$t('add_a_name')}
+          aria-label={$t('name')}
+          disabled={isBusy}
+        />
+        <Button type="submit" size="small" disabled={isBusy || name.trim() === node.name}>{$t('save')}</Button>
+      </form>
+
+      <div class="flex flex-wrap gap-2">
+        <Button size="small" color="secondary" leadingIcon={mdiFaceRecognition} href={Route.faceGraphPerson(node)}>
+          {$t('face_graph_review_faces')}
+        </Button>
+        <Button
+          size="small"
+          color="secondary"
+          variant="ghost"
+          leadingIcon={node.isHidden ? mdiEyeOutline : mdiEyeOffOutline}
+          disabled={isBusy}
+          onclick={onToggleHidden}
+        >
+          {node.isHidden ? $t('unhide_person') : $t('hide_person')}
+        </Button>
+      </div>
+    {/if}
   </section>
 {:else if selectedNodes.length > 1}
   <section class="flex flex-col gap-3 border-b p-3">
     <div class="flex flex-wrap gap-1">
       {#each selectedNodes as selectedNode (selectedNode.id)}
-        <img
-          src={getPeopleThumbnailUrl(selectedNode)}
-          alt={selectedNode.name}
-          title={selectedNode.name}
-          class="size-10 rounded-full object-cover"
-        />
+        <FaceGraphNodeThumbnail node={selectedNode} size={40} />
       {/each}
     </div>
-    <Button size="small" leadingIcon={mdiCallMerge} loading={isBusy} onclick={onMerge}>
+    <Button
+      size="small"
+      leadingIcon={mdiCallMerge}
+      loading={isBusy}
+      disabled={selectedNodes.some((node) => isUnassigned(node))}
+      onclick={onMerge}
+    >
       {$t('face_graph_merge_people', { values: { count: selectedNodes.length } })}
     </Button>
     <Text size="tiny" color="muted">{$t('face_graph_merge_hint')}</Text>

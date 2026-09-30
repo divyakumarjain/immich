@@ -18,6 +18,7 @@ import {
 const node = (id: string, values: Partial<FaceGraphNodeDto> = {}): FaceGraphNodeDto => ({
   id,
   kind: FaceGraphNodeKind.Person,
+  face: null,
   name: '',
   isHidden: false,
   isFavorite: false,
@@ -29,7 +30,7 @@ const node = (id: string, values: Partial<FaceGraphNodeDto> = {}): FaceGraphNode
   ...values,
 });
 
-const filters: FaceGraphFilters = { unnamedOnly: false, showHidden: false, minPhotos: 1 };
+const filters: FaceGraphFilters = { unnamedOnly: false, showHidden: false, showUnassigned: false, minPhotos: 1 };
 
 describe('face graph utils', () => {
   describe('nodeRadius', () => {
@@ -53,6 +54,12 @@ describe('face graph utils', () => {
     it('should only keep unnamed people when asked', () => {
       expect(matchesFilters(node('a', { name: 'Alice' }), { ...filters, unnamedOnly: true })).toBe(false);
       expect(matchesFilters(node('a'), { ...filters, unnamedOnly: true })).toBe(true);
+    });
+
+    it('should hide unassigned faces by default', () => {
+      const unassigned = node('a', { kind: FaceGraphNodeKind.Unassigned });
+      expect(matchesFilters(unassigned, filters)).toBe(false);
+      expect(matchesFilters(unassigned, { ...filters, showUnassigned: true })).toBe(true);
     });
 
     it('should apply the minimum number of photos', () => {
@@ -211,6 +218,11 @@ describe('face graph utils', () => {
   describe('findMergeTarget', () => {
     it('should prefer a named person', () => {
       const nodes = [node('a', { assetCount: 100 }), node('b', { name: 'Bob', assetCount: 5 })];
+      expect(findMergeTarget(nodes)?.id).toBe('b');
+    });
+
+    it('should never pick unassigned faces', () => {
+      const nodes = [node('a', { assetCount: 100, kind: FaceGraphNodeKind.Unassigned }), node('b', { assetCount: 5 })];
       expect(findMergeTarget(nodes)?.id).toBe('b');
     });
 

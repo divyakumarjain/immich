@@ -6,26 +6,34 @@
   import { mdiAccountArrowRightOutline, mdiAlertOutline, mdiCheckCircle, mdiOpenInNew } from '@mdi/js';
   import { t } from 'svelte-i18n';
   import type { SvelteSet } from 'svelte/reactivity';
-  import FaceCrop from './FaceCrop.svelte';
+  import FaceCrop from '$lib/components/face-graph/FaceCrop.svelte';
 
   type Props = {
     group: FaceGroupDto;
     isMain: boolean;
+    /** suggest a person for every group, for faces that do not belong to anyone yet */
+    alwaysSuggest?: boolean;
     selection: SvelteSet<string>;
     disabled: boolean;
     onMoveToClosest: (group: FaceGroupDto) => void;
   };
 
-  let { group, isMain, selection, disabled, onMoveToClosest }: Props = $props();
+  let { group, isMain, alwaysSuggest = false, selection, disabled, onMoveToClosest }: Props = $props();
 
   const FACE_SIZE = 96;
   const INITIAL_FACES = 24;
+  const SUGGESTION_MAX_DISTANCE = 0.6;
 
   let showAll = $state(false);
 
   const faces = $derived(showAll ? group.faces : group.faces.slice(0, INITIAL_FACES));
   const selectedCount = $derived(group.faces.filter(({ id }) => selection.has(id)).length);
   const isSuspicious = $derived(looksLikeSomeoneElse(group));
+  const suggestion = $derived(
+    isSuspicious || (alwaysSuggest && (group.closestPerson?.distance ?? Infinity) <= SUGGESTION_MAX_DISTANCE)
+      ? group.closestPerson
+      : null,
+  );
   const distanceClass = $derived(
     group.distanceToMain > 0.5
       ? 'bg-danger/15 text-danger'
@@ -80,11 +88,11 @@
       </span>
     {/if}
 
-    {#if isSuspicious && group.closestPerson}
+    {#if suggestion}
       <span class="flex items-center gap-1 text-sm">
         <Icon icon={mdiAlertOutline} size="18" class="text-warning" />
-        {$t('face_graph_looks_like', { values: { name: group.closestPerson.name || null } })}
-        <span class="text-xs tabular-nums opacity-70">({group.closestPerson.distance.toFixed(2)})</span>
+        {$t('face_graph_looks_like', { values: { name: suggestion.name || null } })}
+        <span class="text-xs tabular-nums opacity-70">({suggestion.distance.toFixed(2)})</span>
       </span>
       <Button
         size="small"
@@ -93,7 +101,7 @@
         {disabled}
         onclick={() => onMoveToClosest(group)}
       >
-        {$t('face_graph_move_group', { values: { name: group.closestPerson.name || null } })}
+        {$t('face_graph_move_group', { values: { name: suggestion.name || null } })}
       </Button>
     {/if}
   </header>

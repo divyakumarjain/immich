@@ -1,6 +1,7 @@
 <script lang="ts">
   import { faceGraphManager } from '$lib/managers/face-graph-manager.svelte';
-  import { getPeopleThumbnailUrl } from '$lib/utils';
+  import FaceGraphNodeThumbnail from '$lib/components/face-graph/FaceGraphNodeThumbnail.svelte';
+  import { isUnassigned } from '$lib/utils/face-graph';
   import { Text } from '@immich/ui';
   import { t } from 'svelte-i18n';
 
@@ -26,13 +27,13 @@
             {node.id === selectedId ? 'bg-primary/10' : ''}"
           onclick={() => faceGraphManager.focusOn(node.id)}
         >
-          <img
-            src={getPeopleThumbnailUrl(node)}
-            alt=""
-            loading="lazy"
-            class="size-10 rounded-full object-cover {node.isHidden ? 'opacity-40' : ''}"
-          />
-          <span class="text-sm">{$t('face_graph_photos', { values: { count: node.assetCount } })}</span>
+          <FaceGraphNodeThumbnail {node} size={40} />
+          <span class="text-sm">
+            {$t('face_graph_photos', { values: { count: node.assetCount } })}
+            {#if isUnassigned(node)}
+              <span class="block text-xs opacity-70">{$t('face_unassigned')}</span>
+            {/if}
+          </span>
         </button>
       </li>
     {/each}

@@ -1,4 +1,10 @@
-import type { FaceGraphEdgeDto, FaceGraphNodeDto, FaceGroupDto, FaceGroupFaceDto } from '@immich/sdk';
+import {
+  FaceGraphNodeKind,
+  type FaceGraphEdgeDto,
+  type FaceGraphNodeDto,
+  type FaceGroupDto,
+  type FaceGroupFaceDto,
+} from '@immich/sdk';
 import { forceCollide, forceLink, forceSimulation, forceX, forceY } from 'd3-force';
 import { normalizeSearchString } from '$lib/utils/string-utils';
 
@@ -7,6 +13,7 @@ export type FaceGraphPosition = { x: number; y: number };
 export type FaceGraphFilters = {
   unnamedOnly: boolean;
   showHidden: boolean;
+  showUnassigned: boolean;
   minPhotos: number;
 };
 
@@ -21,7 +28,12 @@ export const nodeRadius = (assetCount: number) =>
 
 export const isUnnamed = (node: FaceGraphNodeDto) => node.name === '';
 
+export const isUnassigned = (node: FaceGraphNodeDto) => node.kind === FaceGraphNodeKind.Unassigned;
+
 export const matchesFilters = (node: FaceGraphNodeDto, filters: FaceGraphFilters) => {
+  if (isUnassigned(node) && !filters.showUnassigned) {
+    return false;
+  }
   if (node.isHidden && !filters.showHidden) {
     return false;
   }
@@ -150,9 +162,14 @@ export const findNodeByName = (nodes: FaceGraphNodeDto[], name: string, excludeI
   if (!query) {
     return;
   }
-  return nodes.find((node) => node.id !== excludeId && normalizeSearchString(node.name) === query);
+  return nodes.find(
+    (node) => node.id !== excludeId && !isUnassigned(node) && normalizeSearchString(node.name) === query,
+  );
 };
 
 /** the person the others are merged into: a named one if there is any, otherwise the one with the most photos */
 export const findMergeTarget = (nodes: FaceGraphNodeDto[]) =>
-  nodes.toSorted((a, b) => Number(isUnnamed(a)) - Number(isUnnamed(b)) || b.assetCount - a.assetCount).at(0);
+  nodes
+    .filter((node) => !isUnassigned(node))
+    .toSorted((a, b) => Number(isUnnamed(a)) - Number(isUnnamed(b)) || b.assetCount - a.assetCount)
+    .at(0);

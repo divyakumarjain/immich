@@ -143,6 +143,7 @@ export const Route = {
   geolocationUtility: () => '/utilities/geolocation',
   faceGraphUtility: () => '/utilities/face-graph',
   faceGraphPerson: ({ id }: { id: string }) => `/utilities/face-graph/${id}`,
+  faceGraphUnassigned: ({ id }: { id: string }) => `/utilities/face-graph/unassigned/${id}`,
 
   // workflows
   workflows: () => '/workflows',

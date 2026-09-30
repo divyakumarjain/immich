@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { getPeopleThumbnailUrl } from '$lib/utils';
-  import { isUnnamed, nodeRadius, type FaceGraphPosition } from '$lib/utils/face-graph';
-  import { FaceGraphNodeKind, type FaceGraphEdgeDto, type FaceGraphNodeDto } from '@immich/sdk';
+  import { getAssetMediaUrl, getPeopleThumbnailUrl } from '$lib/utils';
+  import { getFaceCrop, isLargeFace, isUnnamed, nodeRadius, type FaceGraphPosition } from '$lib/utils/face-graph';
+  import { AssetMediaSize, FaceGraphNodeKind, type FaceGraphEdgeDto, type FaceGraphNodeDto } from '@immich/sdk';
   import { select } from 'd3-selection';
   import { zoom, zoomIdentity, type ZoomBehavior, type ZoomTransform } from 'd3-zoom';
   import { untrack, type Snippet } from 'svelte';
@@ -67,7 +67,13 @@
     if (!image) {
       image = new Image();
       image.addEventListener('load', scheduleDraw);
-      image.src = getPeopleThumbnailUrl(node);
+      image.src = node.face
+        ? getAssetMediaUrl({
+            id: node.face.assetId,
+            size: isLargeFace(node.face) ? AssetMediaSize.Thumbnail : AssetMediaSize.Preview,
+            edited: false,
+          })
+        : getPeopleThumbnailUrl(node);
       images.set(key, image);
     }
     return image.complete && image.naturalWidth > 0 ? image : undefined;
@@ -141,7 +147,24 @@
         if (image) {
           context.save();
           context.clip();
-          context.drawImage(image, x - radius, y - radius, radius * 2, radius * 2);
+          if (node.face) {
+            // unassigned faces have no thumbnail of their own, the face is cut out of the photo
+            const crop = getFaceCrop(node.face);
+            const scale = image.naturalWidth / node.face.imageWidth;
+            context.drawImage(
+              image,
+              crop.x * scale,
+              crop.y * scale,
+              crop.size * scale,
+              crop.size * scale,
+              x - radius,
+              y - radius,
+              radius * 2,
+              radius * 2,
+            );
+          } else {
+            context.drawImage(image, x - radius, y - radius, radius * 2, radius * 2);
+          }
           context.restore();
         } else {
           context.fillStyle = 'rgb(128 128 128 / 0.3)';
