@@ -177,6 +177,36 @@ describe('face graph utils', () => {
       expect(extent(positions)).toBeLessThan(before / 2);
     });
 
+    it('should leave the others in place when a node is taken out after an edit', () => {
+      const nodes = Array.from({ length: 20 }, (_, i) =>
+        node(String(i), { assetCount: 100, x: Math.cos(i), y: Math.sin(i) }),
+      );
+      const layout = createLayout(nodes, []);
+      const before = layout.getPositions();
+
+      expect(layout.show(nodes.slice(1), { keepPlaces: true })).toBe(true);
+      expect(layout.step()).toBe(false);
+
+      const after = layout.getPositions();
+      expect(after.has('0')).toBe(false);
+      for (const { id } of nodes.slice(1)) {
+        expect(after.get(id)).toEqual(before.get(id));
+      }
+    });
+
+    it('should make room when a node grows after an edit', () => {
+      const nodes = [node('a', { x: -0.1, assetCount: 100 }), node('b', { x: 0.1, assetCount: 100 })];
+      const layout = createLayout(nodes, []);
+
+      layout.show([{ ...nodes[0], assetCount: 900 }, nodes[1]], { keepPlaces: true });
+      while (layout.step()) {
+        // let the layout settle
+      }
+
+      const positions = layout.getPositions();
+      expect(distance(positions.get('a')!, positions.get('b')!)).toBeGreaterThan(79);
+    });
+
     it('should not start over when the shown nodes stay the same', () => {
       const nodes = [node('a'), node('b', { x: 1 })];
       const layout = createLayout(nodes, []);
