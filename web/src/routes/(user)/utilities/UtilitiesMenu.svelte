@@ -7,6 +7,7 @@
     mdiCellphoneArrowDownVariant,
     mdiContentDuplicate,
     mdiCrosshairsGps,
+    mdiFaceRecognition,
     mdiImageSizeSelectLarge,
     mdiLinkEdit,
     mdiStateMachine,
@@ -17,6 +18,7 @@
     { href: Route.duplicatesUtility(), icon: mdiContentDuplicate, label: $t('review_duplicates') },
     { href: Route.largeFileUtility(), icon: mdiImageSizeSelectLarge, label: $t('review_large_files') },
     { href: Route.geolocationUtility(), icon: mdiCrosshairsGps, label: $t('manage_geolocation') },
+    { href: Route.faceGraphUtility(), icon: mdiFaceRecognition, label: $t('review_face_graph') },
     { href: Route.workflows(), icon: mdiStateMachine, label: $t('workflows') },
   ];
 </script>

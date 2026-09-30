@@ -6977,6 +6977,247 @@
         "x-immich-state": "Stable"
       }
     },
+    "/face-graph": {
+      "get": {
+        "description": "Retrieve the people of the authenticated user as a graph, in which people with similar faces are linked and positioned close to each other.",
+        "operationId": "getFaceGraph",
+        "parameters": [
+          {
+            "name": "maxDistance",
+            "required": false,
+            "in": "query",
+            "description": "Maximum distance between linked people, defaults to the facial recognition distance",
+            "schema": {
+              "minimum": 0,
+              "maximum": 2,
+              "format": "double",
+              "type": "number"
+            }
+          },
+          {
+            "name": "minFaces",
+            "required": false,
+            "in": "query",
+            "description": "Only include people with at least this many faces",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "default": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "neighbors",
+            "required": false,
+            "in": "query",
+            "description": "Maximum number of similar people to link",
+            "schema": {
+              "minimum": 1,
+              "maximum": 20,
+              "default": 5,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "withHidden",
+            "required": false,
+            "in": "query",
+            "description": "Include hidden people",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "withUnassigned",
+            "required": false,
+            "in": "query",
+            "description": "Include groups of similar faces that are not assigned to a person",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FaceGraphResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Retrieve the face graph",
+        "tags": [
+          "People"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.3.0",
+            "state": "Added"
+          },
+          {
+            "version": "v3.3.0",
+            "state": "Alpha"
+          }
+        ],
+        "x-immich-permission": "person.read",
+        "x-immich-state": "Alpha"
+      }
+    },
+    "/face-graph/people/{id}/groups": {
+      "get": {
+        "description": "Retrieve the faces of a person grouped by similarity. Groups that are far from the largest group may belong to a different person.",
+        "operationId": "getFaceGroups",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          },
+          {
+            "name": "threshold",
+            "required": false,
+            "in": "query",
+            "description": "Maximum distance of a face to its group, lower values create more groups",
+            "schema": {
+              "minimum": 0.05,
+              "maximum": 1,
+              "format": "double",
+              "default": 0.4,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FaceGroupsResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Retrieve the face groups of a person",
+        "tags": [
+          "People"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.3.0",
+            "state": "Added"
+          },
+          {
+            "version": "v3.3.0",
+            "state": "Alpha"
+          }
+        ],
+        "x-immich-permission": "person.read",
+        "x-immich-state": "Alpha"
+      }
+    },
+    "/face-graph/unassigned/{id}/groups": {
+      "get": {
+        "description": "Retrieve a group of similar faces that are not assigned to a person, identified by the ID of one of its faces, split further by similarity.",
+        "operationId": "getUnassignedFaceGroups",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          },
+          {
+            "name": "threshold",
+            "required": false,
+            "in": "query",
+            "description": "Maximum distance of a face to its group, lower values create more groups",
+            "schema": {
+              "minimum": 0.05,
+              "maximum": 1,
+              "format": "double",
+              "default": 0.4,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FaceGroupsResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Retrieve the face groups of unassigned faces",
+        "tags": [
+          "People"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.3.0",
+            "state": "Added"
+          },
+          {
+            "version": "v3.3.0",
+            "state": "Alpha"
+          }
+        ],
+        "x-immich-permission": "face.read",
+        "x-immich-state": "Alpha"
+      }
+    },
     "/faces": {
       "get": {
         "description": "Retrieve all faces belonging to an asset.",
@@ -22311,6 +22552,309 @@
         },
         "required": [
           "id"
+        ],
+        "type": "object"
+      },
+      "FaceGraphEdgeDto": {
+        "properties": {
+          "distance": {
+            "description": "Distance between the two nodes, lower is more similar",
+            "format": "double",
+            "type": "number"
+          },
+          "source": {
+            "description": "Node ID",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+            "type": "string"
+          },
+          "target": {
+            "description": "Node ID",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "distance",
+          "source",
+          "target"
+        ],
+        "type": "object"
+      },
+      "FaceGraphNodeDto": {
+        "properties": {
+          "assetCount": {
+            "description": "Number of assets the person appears in",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "face": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/FaceGroupFaceDto"
+              }
+            ],
+            "description": "The most representative face, for unassigned faces only",
+            "nullable": true
+          },
+          "faceCount": {
+            "description": "Number of faces assigned to the person",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "description": "Person ID, or the ID of the most representative face for unassigned faces",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+            "type": "string"
+          },
+          "isFavorite": {
+            "description": "Is favorite",
+            "type": "boolean"
+          },
+          "isHidden": {
+            "description": "Is hidden",
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/FaceGraphNodeKind"
+          },
+          "name": {
+            "description": "Person name",
+            "type": "string"
+          },
+          "updatedAt": {
+            "description": "Last update date",
+            "format": "date-time",
+            "type": "string"
+          },
+          "x": {
+            "description": "Suggested horizontal position, between -1 and 1",
+            "format": "double",
+            "type": "number"
+          },
+          "y": {
+            "description": "Suggested vertical position, between -1 and 1",
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "assetCount",
+          "face",
+          "faceCount",
+          "id",
+          "isFavorite",
+          "isHidden",
+          "kind",
+          "name",
+          "updatedAt",
+          "x",
+          "y"
+        ],
+        "type": "object"
+      },
+      "FaceGraphNodeKind": {
+        "description": "Whether the node is a person or a group of faces that are not assigned to a person",
+        "enum": [
+          "person",
+          "unassigned"
+        ],
+        "type": "string"
+      },
+      "FaceGraphResponseDto": {
+        "properties": {
+          "edges": {
+            "description": "Links between similar nodes",
+            "items": {
+              "$ref": "#/components/schemas/FaceGraphEdgeDto"
+            },
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/FaceGraphNodeDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "edges",
+          "nodes"
+        ],
+        "type": "object"
+      },
+      "FaceGroupClosestPersonDto": {
+        "properties": {
+          "distance": {
+            "description": "Distance to the person, lower is more similar",
+            "format": "double",
+            "type": "number"
+          },
+          "id": {
+            "description": "Person ID",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+            "type": "string"
+          },
+          "name": {
+            "description": "Person name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "distance",
+          "id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "FaceGroupDto": {
+        "properties": {
+          "assetCount": {
+            "description": "Number of assets in the group",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "closestPerson": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/FaceGroupClosestPersonDto"
+              }
+            ],
+            "description": "The other person that looks most like the group",
+            "nullable": true
+          },
+          "distanceToMain": {
+            "description": "Distance to the largest group, lower is more similar",
+            "format": "double",
+            "type": "number"
+          },
+          "faces": {
+            "description": "Faces of the group, the most representative first",
+            "items": {
+              "$ref": "#/components/schemas/FaceGroupFaceDto"
+            },
+            "type": "array"
+          },
+          "id": {
+            "description": "ID of the most representative face of the group",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "assetCount",
+          "closestPerson",
+          "distanceToMain",
+          "faces",
+          "id"
+        ],
+        "type": "object"
+      },
+      "FaceGroupFaceDto": {
+        "properties": {
+          "assetId": {
+            "description": "Asset ID",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+            "type": "string"
+          },
+          "boundingBoxX1": {
+            "description": "Bounding box X1 coordinate",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "boundingBoxX2": {
+            "description": "Bounding box X2 coordinate",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "boundingBoxY1": {
+            "description": "Bounding box Y1 coordinate",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "boundingBoxY2": {
+            "description": "Bounding box Y2 coordinate",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "distance": {
+            "description": "Distance to the largest group, lower is more similar",
+            "format": "double",
+            "type": "number"
+          },
+          "fileCreatedAt": {
+            "description": "Date the asset was taken",
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "description": "Face ID",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+            "type": "string"
+          },
+          "imageHeight": {
+            "description": "Image height in pixels",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "imageWidth": {
+            "description": "Image width in pixels",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "assetId",
+          "boundingBoxX1",
+          "boundingBoxX2",
+          "boundingBoxY1",
+          "boundingBoxY2",
+          "distance",
+          "fileCreatedAt",
+          "id",
+          "imageHeight",
+          "imageWidth"
+        ],
+        "type": "object"
+      },
+      "FaceGroupsResponseDto": {
+        "properties": {
+          "groups": {
+            "description": "Groups of similar faces, largest first",
+            "items": {
+              "$ref": "#/components/schemas/FaceGroupDto"
+            },
+            "type": "array"
+          },
+          "threshold": {
+            "description": "Threshold used to create the groups",
+            "format": "double",
+            "type": "number"
+          },
+          "truncated": {
+            "description": "Whether only the most recent faces of the person were grouped",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "groups",
+          "threshold",
+          "truncated"
         ],
         "type": "object"
       },

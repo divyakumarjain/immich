@@ -18,6 +18,13 @@ export interface PersonSearchOptions {
   closestFaceAssetId?: string;
 }
 
+export interface FaceEmbeddingOptions {
+  userId: string;
+  /** `null` selects the faces that are not assigned to a person */
+  personGroupId: string | null;
+  limit: number;
+}
+
 export interface PersonNameSearchOptions {
   withHidden?: boolean;
 }
@@ -450,6 +457,60 @@ export class PersonRepository {
     return {
       assets: result ? Number(result.count) : 0,
     };
+  }
+
+  @GenerateSql({ params: [DummyValue.UUID] })
+  getCentroids(userId: string) {
+    return this.db
+      .selectFrom('asset_face')
+      .innerJoin('asset', 'asset.id', 'asset_face.assetId')
+      .innerJoin('face_search', 'face_search.faceId', 'asset_face.id')
+      .innerJoin('person', (join) =>
+        join.onRef('person.personGroupId', '=', 'asset_face.personGroupId').on('person.ownerId', '=', userId),
+      )
+      .select(['person.personGroupId', 'person.name', 'person.isHidden', 'person.isFavorite', 'person.updatedAt'])
+      .select(sql<string>`avg(face_search.embedding)::text`.as('centroid'))
+      .select((eb) => eb.fn.count(eb.fn('distinct', ['asset.id'])).as('assetCount'))
+      .select((eb) => eb.fn.countAll().as('faceCount'))
+      .where('asset_face.deletedAt', 'is', null)
+      .where('asset_face.isVisible', 'is', true)
+      .where('asset.ownerId', '=', userId)
+      .where('asset.visibility', '=', sql.lit(AssetVisibility.Timeline))
+      .where('asset.deletedAt', 'is', null)
+      .groupBy(['person.ownerId', 'person.personGroupId'])
+      .orderBy('person.personGroupId')
+      .execute();
+  }
+
+  @GenerateSql({ params: [{ userId: DummyValue.UUID, personGroupId: DummyValue.UUID, limit: 100 }] })
+  getFaceEmbeddings({ userId, personGroupId, limit }: FaceEmbeddingOptions) {
+    return this.db
+      .selectFrom('asset_face')
+      .innerJoin('asset', 'asset.id', 'asset_face.assetId')
+      .innerJoin('face_search', 'face_search.faceId', 'asset_face.id')
+      .select([
+        'asset_face.id',
+        'asset_face.assetId',
+        'asset_face.imageWidth',
+        'asset_face.imageHeight',
+        'asset_face.boundingBoxX1',
+        'asset_face.boundingBoxY1',
+        'asset_face.boundingBoxX2',
+        'asset_face.boundingBoxY2',
+        'asset.fileCreatedAt',
+        'face_search.embedding',
+      ])
+      .$if(personGroupId !== null, (qb) => qb.where('asset_face.personGroupId', '=', personGroupId))
+      .$if(personGroupId === null, (qb) => qb.where('asset_face.personGroupId', 'is', null))
+      .where('asset_face.deletedAt', 'is', null)
+      .where('asset_face.isVisible', 'is', true)
+      .where('asset.ownerId', '=', userId)
+      .where('asset.visibility', '=', sql.lit(AssetVisibility.Timeline))
+      .where('asset.deletedAt', 'is', null)
+      .orderBy('asset.fileCreatedAt', 'desc')
+      .orderBy('asset_face.id')
+      .limit(limit)
+      .execute();
   }
 
   @GenerateSql({ params: [DummyValue.UUID] })
