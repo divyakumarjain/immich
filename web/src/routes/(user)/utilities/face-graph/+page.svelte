@@ -15,6 +15,7 @@
   import type { PageData } from './$types';
   import FaceGraphHoverCard from './FaceGraphHoverCard.svelte';
   import FaceGraphQueue from './FaceGraphQueue.svelte';
+  import FaceGraphSelection from './FaceGraphSelection.svelte';
 
   interface Props {
     data: PageData;
@@ -23,6 +24,7 @@
   let { data }: Props = $props();
 
   let graph = $state<ReturnType<typeof FaceGraphCanvas>>();
+  let selectionPanel = $state<ReturnType<typeof FaceGraphSelection>>();
   let showEdges = $state(true);
   let search = $state('');
 
@@ -61,6 +63,7 @@
         }
       },
     },
+    { shortcut: { key: 'r' }, onShortcut: () => selectionPanel?.focusName() },
     { shortcut: { key: 'Escape' }, onShortcut: () => faceGraphManager.clearSelection() },
   ]}
 />
@@ -157,8 +160,11 @@
         {/if}
       </div>
 
-      <aside class="hidden w-64 shrink-0 rounded-2xl border text-dark lg:block">
-        <FaceGraphQueue />
+      <aside class="hidden w-64 shrink-0 flex-col rounded-2xl border text-dark lg:flex">
+        <FaceGraphSelection bind:this={selectionPanel} />
+        <div class="min-h-0 flex-1">
+          <FaceGraphQueue />
+        </div>
       </aside>
     </div>
   </div>

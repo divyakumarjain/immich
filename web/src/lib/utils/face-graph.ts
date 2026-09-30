@@ -143,3 +143,16 @@ export const isLargeFace = (face: FaceBox) =>
 /** a group is suspicious when it looks more like someone else than like the rest of the person */
 export const looksLikeSomeoneElse = (group: Pick<FaceGroupDto, 'closestPerson' | 'distanceToMain'>) =>
   !!group.closestPerson && group.closestPerson.distance < group.distanceToMain;
+
+/** another person with the same name, ignoring case and accents */
+export const findNodeByName = (nodes: FaceGraphNodeDto[], name: string, excludeId: string) => {
+  const query = normalizeSearchString(name);
+  if (!query) {
+    return;
+  }
+  return nodes.find((node) => node.id !== excludeId && normalizeSearchString(node.name) === query);
+};
+
+/** the person the others are merged into: a named one if there is any, otherwise the one with the most photos */
+export const findMergeTarget = (nodes: FaceGraphNodeDto[]) =>
+  nodes.toSorted((a, b) => Number(isUnnamed(a)) - Number(isUnnamed(b)) || b.assetCount - a.assetCount).at(0);

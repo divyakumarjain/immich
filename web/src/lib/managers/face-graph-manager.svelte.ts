@@ -110,6 +110,20 @@ class FaceGraphManager {
     this.#nodes = this.#nodes.map((node) => (node.id === id ? { ...node, ...changes } : node));
   }
 
+  /** adds the photos of the other people to the target and removes them from the graph */
+  mergeNodes(targetId: string, otherIds: string[]) {
+    const others = otherIds.map((id) => this.nodeById.get(id)).filter((node) => !!node);
+    const target = this.nodeById.get(targetId);
+    if (target) {
+      this.updateNode(targetId, {
+        assetCount: target.assetCount + others.reduce((sum, { assetCount }) => sum + assetCount, 0),
+        faceCount: target.faceCount + others.reduce((sum, { faceCount }) => sum + faceCount, 0),
+      });
+    }
+    this.removeNodes(otherIds);
+    this.#selectedIds = [targetId];
+  }
+
   removeNodes(ids: string[]) {
     this.#nodes = this.#nodes.filter((node) => !ids.includes(node.id));
     this.#edges = this.#edges.filter(({ source, target }) => !ids.includes(source) && !ids.includes(target));

@@ -1,6 +1,8 @@
 import { FaceGraphNodeKind, type FaceGraphNodeDto } from '@immich/sdk';
 import {
   computeLayout,
+  findMergeTarget,
+  findNodeByName,
   getFaceCrop,
   getFaceCropStyle,
   getNeighbors,
@@ -190,6 +192,31 @@ describe('face graph utils', () => {
     it('should be false otherwise', () => {
       expect(looksLikeSomeoneElse({ closestPerson, distanceToMain: 0.2 })).toBe(false);
       expect(looksLikeSomeoneElse({ closestPerson: null, distanceToMain: 0.6 })).toBe(false);
+    });
+  });
+
+  describe('findNodeByName', () => {
+    const nodes = [node('a', { name: 'Zoé' }), node('b', { name: 'Bob' }), node('c')];
+
+    it('should find another person with the same name', () => {
+      expect(findNodeByName(nodes, 'zoe', 'c')?.id).toBe('a');
+    });
+
+    it('should ignore the person itself and empty names', () => {
+      expect(findNodeByName(nodes, 'Zoé', 'a')).toBeUndefined();
+      expect(findNodeByName(nodes, '', 'a')).toBeUndefined();
+    });
+  });
+
+  describe('findMergeTarget', () => {
+    it('should prefer a named person', () => {
+      const nodes = [node('a', { assetCount: 100 }), node('b', { name: 'Bob', assetCount: 5 })];
+      expect(findMergeTarget(nodes)?.id).toBe('b');
+    });
+
+    it('should otherwise pick the person with the most photos', () => {
+      const nodes = [node('a', { assetCount: 5 }), node('b', { assetCount: 100 })];
+      expect(findMergeTarget(nodes)?.id).toBe('b');
     });
   });
 });
