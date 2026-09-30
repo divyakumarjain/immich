@@ -158,6 +158,33 @@ describe('face graph utils', () => {
       expect(distance(positions.get('a')!, positions.get('b')!)).toBeGreaterThan(39);
     });
 
+    it('should only lay out the shown nodes and close the gaps', () => {
+      const nodes = Array.from({ length: 40 }, (_, i) =>
+        node(String(i), { assetCount: 100, x: Math.cos(i), y: Math.sin(i) }),
+      );
+      const layout = createLayout(nodes, []);
+      const extent = (positions: Map<string, { x: number; y: number }>) =>
+        Math.max(...positions.values().map(({ x, y }) => Math.hypot(x, y)));
+      const before = extent(layout.getPositions());
+
+      expect(layout.show(nodes.slice(0, 5))).toBe(true);
+      while (layout.step()) {
+        // let the layout settle
+      }
+
+      const positions = layout.getPositions();
+      expect([...positions.keys()]).toEqual(['0', '1', '2', '3', '4']);
+      expect(extent(positions)).toBeLessThan(before / 2);
+    });
+
+    it('should not start over when the shown nodes stay the same', () => {
+      const nodes = [node('a'), node('b', { x: 1 })];
+      const layout = createLayout(nodes, []);
+
+      expect(layout.show([...nodes])).toBe(false);
+      expect(layout.show([nodes[0], { ...nodes[1], assetCount: 400 }])).toBe(true);
+    });
+
     it('should ignore links to unknown nodes', () => {
       const positions = computeLayout([node('a')], [{ source: 'a', target: 'missing', distance: 0.1 }]);
       expect(positions.size).toBe(1);

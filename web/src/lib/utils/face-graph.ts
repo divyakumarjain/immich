@@ -74,52 +74,109 @@ export const getNeighbors = (id: string, edges: FaceGraphEdgeDto[]) =>
 /**
  * Spreads the nodes out so they do not overlap, while keeping linked nodes close together
  * and unrelated nodes near the position suggested by the server.
+ * Only the shown nodes take up room, see `show`.
  */
-export const createLayout = (nodes: FaceGraphNodeDto[], edges: FaceGraphEdgeDto[]) => {
-  const totalArea = nodes.reduce((sum, node) => sum + Math.PI * (nodeRadius(node.assetCount) + NODE_PADDING) ** 2, 0);
-  const scale = Math.sqrt(totalArea) * 1.5;
-
-  const simulationNodes = nodes.map((node) => ({
-    id: node.id,
-    radius: nodeRadius(node.assetCount),
-    seedX: node.x * scale,
-    seedY: node.y * scale,
-    x: node.x * scale,
-    y: node.y * scale,
-    fx: undefined as number | undefined,
-    fy: undefined as number | undefined,
-  }));
-  type SimulationNode = (typeof simulationNodes)[number];
-  const byId = new Map(simulationNodes.map((node) => [node.id, node]));
-
-  const ids = new Set(nodes.map(({ id }) => id));
-  const links = edges
-    .filter(({ source, target }) => ids.has(source) && ids.has(target))
-    .map(({ source, target, distance }) => ({ source, target, distance }));
+export const createLayout = (
+  nodes: FaceGraphNodeDto[],
+  edges: FaceGraphEdgeDto[],
+  visible: FaceGraphNodeDto[] = nodes,
+) => {
+  type SimulationNode = {
+    id: string;
+    radius: number;
+    /** position suggested by the server, between -1 and 1 */
+    unitX: number;
+    unitY: number;
+    seedX: number;
+    seedY: number;
+    x: number;
+    y: number;
+    fx?: number;
+    fy?: number;
+  };
   type SimulationLink = { source: SimulationNode | string; target: SimulationNode | string; distance: number };
 
-  const simulation = forceSimulation(simulationNodes)
-    .force(
-      'link',
-      forceLink<SimulationNode, SimulationLink>(links)
-        .id((node) => node.id)
-        .distance(
-          ({ source, target, distance }) =>
-            (source as SimulationNode).radius + (target as SimulationNode).radius + NODE_PADDING + distance * 100,
-        )
-        .strength(0.4),
+  const byId = new Map<string, SimulationNode>(
+    nodes.map((node) => [
+      node.id,
+      { id: node.id, radius: 0, unitX: node.x, unitY: node.y, seedX: 0, seedY: 0, x: 0, y: 0 },
+    ]),
+  );
+  let shown: SimulationNode[] = [];
+
+  const linkForce = forceLink<SimulationNode, SimulationLink>([])
+    .id((node) => node.id)
+    .distance(
+      ({ source, target, distance }) =>
+        (source as SimulationNode).radius + (target as SimulationNode).radius + NODE_PADDING + distance * 100,
     )
+    .strength(0.4);
+
+  const simulation = forceSimulation<SimulationNode>([])
+    .force('link', linkForce)
     .force(
       'collide',
       forceCollide<SimulationNode>((node) => node.radius + NODE_PADDING),
     )
     .force('x', forceX<SimulationNode>((node) => node.seedX).strength(0.05))
     .force('y', forceY<SimulationNode>((node) => node.seedY).strength(0.05))
-    .stop()
-    .tick(LAYOUT_TICKS);
+    .stop();
+
+  /**
+   * Lays out the given nodes only: hidden nodes leave no gaps and the graph shrinks to fit the rest.
+   * Returns whether anything changed.
+   */
+  const show = (visible: FaceGraphNodeDto[]) => {
+    const next = visible.map((node) => byId.get(node.id)).filter((node) => !!node);
+    const radii = visible.map((node) => nodeRadius(node.assetCount));
+    const isSame =
+      next.length === shown.length &&
+      next.every((node, index) => node === shown[index] && node.radius === radii[index]);
+    if (isSame) {
+      return false;
+    }
+
+    const previous = new Set(shown);
+    const totalArea = radii.reduce((sum, radius) => sum + Math.PI * (radius + NODE_PADDING) ** 2, 0);
+    const scale = Math.sqrt(totalArea) * 1.5;
+    for (const [index, node] of next.entries()) {
+      node.radius = radii[index];
+      node.seedX = node.unitX * scale;
+      node.seedY = node.unitY * scale;
+      if (previous.has(node)) {
+        continue;
+      }
+
+      // a node that comes back starts where it belongs, not where it was when it was hidden
+      node.x = node.seedX;
+      node.y = node.seedY;
+    }
+
+    shown = next;
+    const ids = new Set(shown.map(({ id }) => id));
+    simulation.nodes(shown);
+    // forces cache per-node values, so they are set up again for the new nodes
+    linkForce.links(
+      edges
+        .filter(({ source, target }) => ids.has(source) && ids.has(target))
+        .map(({ source, target, distance }) => ({ source, target, distance })),
+    );
+    simulation.force(
+      'collide',
+      forceCollide<SimulationNode>((node) => node.radius + NODE_PADDING),
+    );
+    simulation.force('x', forceX<SimulationNode>((node) => node.seedX).strength(0.05));
+    simulation.force('y', forceY<SimulationNode>((node) => node.seedY).strength(0.05));
+    simulation.alpha(1);
+    return true;
+  };
+
+  show(visible);
+  simulation.tick(LAYOUT_TICKS);
 
   return {
-    getPositions: () => new Map<string, FaceGraphPosition>(simulationNodes.map(({ id, x, y }) => [id, { x, y }])),
+    getPositions: () => new Map<string, FaceGraphPosition>(shown.map(({ id, x, y }) => [id, { x, y }])),
+    show,
     /** holds a node at the given position, the other nodes make room for it on the next steps */
     pin: (id: string, position: FaceGraphPosition) => {
       const node = byId.get(id);
@@ -130,8 +187,8 @@ export const createLayout = (nodes: FaceGraphNodeDto[], edges: FaceGraphEdgeDto[
       }
     },
     /** advances the layout, returns whether it is still moving */
-    step: () => {
-      simulation.tick();
+    step: (ticks = 1) => {
+      simulation.tick(ticks);
       return simulation.alpha() > simulation.alphaMin();
     },
   };

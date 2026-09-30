@@ -11,7 +11,7 @@
   import type { FaceGraphNodeDto } from '@immich/sdk';
   import { Button, Checkbox, IconButton, Input, Label, LoadingSpinner, Text } from '@immich/ui';
   import { mdiFitToScreenOutline, mdiRefresh } from '@mdi/js';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { t } from 'svelte-i18n';
   import type { PageData } from './$types';
   import FaceGraphHoverCard from './FaceGraphHoverCard.svelte';
@@ -41,6 +41,18 @@
   };
 
   onMount(() => load());
+
+  $effect(() => {
+    // filtered people leave no gaps: the rest moves together
+    void faceGraphManager.visibleNodes;
+    untrack(() => faceGraphManager.rearrange());
+  });
+
+  $effect(() => {
+    if (faceGraphManager.rearranged) {
+      untrack(() => graph?.resetView());
+    }
+  });
 
   const onOpen = (node: FaceGraphNodeDto) =>
     goto(isUnassigned(node) ? Route.faceGraphUnassigned(node) : Route.faceGraphPerson(node));
