@@ -313,7 +313,7 @@
 
     const onPointerUp = (event: PointerEvent) => {
       if (!pressed) {
-      	return;
+        return;
       }
 
       element.releasePointerCapture(event.pointerId);
