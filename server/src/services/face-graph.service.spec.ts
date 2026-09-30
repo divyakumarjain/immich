@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { FaceGraphNodeKind } from 'src/dtos/face-graph.dto.js';
 import { FaceGraphService } from 'src/services/face-graph.service.js';
@@ -7,7 +8,13 @@ import { ServiceMocks, newTestService } from 'test/utils.js';
 
 const centroid = (...values: number[]) => JSON.stringify(values);
 
-const person = (values: { name?: string; centroid: string; assetCount?: number; faceCount?: number }) => ({
+const person = (values: {
+  name?: string;
+  centroid: string;
+  assetCount?: number;
+  faceCount?: number;
+  isHidden?: boolean;
+}) => ({
   personGroupId: newUuid(),
   name: '',
   isHidden: false,
@@ -18,6 +25,19 @@ const person = (values: { name?: string; centroid: string; assetCount?: number; 
   ...values,
 });
 
+const face = (embedding: string, assetId = newUuid()) => ({
+  id: newUuid(),
+  assetId,
+  imageWidth: 1000,
+  imageHeight: 800,
+  boundingBoxX1: 10,
+  boundingBoxY1: 20,
+  boundingBoxX2: 110,
+  boundingBoxY2: 140,
+  fileCreatedAt: new Date('2026-01-01T00:00:00.000Z'),
+  embedding,
+});
+
 describe(FaceGraphService.name, () => {
   let sut: FaceGraphService;
   let mocks: ServiceMocks;
@@ -25,6 +45,9 @@ describe(FaceGraphService.name, () => {
   beforeEach(() => {
     ({ sut, mocks } = newTestService(FaceGraphService));
   });
+
+  const allowAccess = (personGroupId: string) =>
+    mocks.access.person.checkAccess.mockResolvedValue(new Set([{ personGroupId, ownerId: authStub.admin.user.id }]));
 
   it('should work', () => {
     expect(sut).toBeDefined();
@@ -38,10 +61,7 @@ describe(FaceGraphService.name, () => {
         nodes: [],
         edges: [],
       });
-      expect(mocks.person.getCentroids).toHaveBeenCalledWith(authStub.admin.user.id, {
-        minFaces: 1,
-        withHidden: false,
-      });
+      expect(mocks.person.getCentroids).toHaveBeenCalledWith(authStub.admin.user.id);
     });
 
     it('should map people to nodes', async () => {
@@ -81,15 +101,106 @@ describe(FaceGraphService.name, () => {
       ]);
     });
 
-    it('should pass the filters to the repository', async () => {
+    it('should leave out hidden people and people with too few faces', async () => {
+      const alice = person({ centroid: centroid(1, 0, 0), faceCount: 5 });
+      const hidden = person({ centroid: centroid(0, 1, 0), faceCount: 5, isHidden: true });
+      const small = person({ centroid: centroid(0, 0, 1), faceCount: 1 });
+      mocks.person.getCentroids.mockResolvedValue([alice, hidden, small]);
+
+      const { nodes } = await sut.getGraph(authStub.admin, { minFaces: 3, neighbors: 5 });
+      expect(nodes.map(({ id }) => id)).toEqual([alice.personGroupId]);
+
+      const withHidden = await sut.getGraph(authStub.admin, { minFaces: 3, withHidden: true, neighbors: 5 });
+      expect(withHidden.nodes.map(({ id }) => id)).toEqual([alice.personGroupId, hidden.personGroupId]);
+    });
+
+    it('should always load the latest people', async () => {
       mocks.person.getCentroids.mockResolvedValue([]);
 
-      await sut.getGraph(authStub.admin, { minFaces: 3, withHidden: true, neighbors: 5 });
+      await sut.getGraph(authStub.admin, { minFaces: 1, neighbors: 5 });
+      await sut.getGraph(authStub.admin, { minFaces: 1, neighbors: 5 });
 
-      expect(mocks.person.getCentroids).toHaveBeenCalledWith(authStub.admin.user.id, {
-        minFaces: 3,
-        withHidden: true,
+      expect(mocks.person.getCentroids).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('getGroups', () => {
+    it('should require access to the person', async () => {
+      await expect(sut.getGroups(authStub.admin, newUuid(), { threshold: 0.4 })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(mocks.person.getFaceEmbeddings).not.toHaveBeenCalled();
+    });
+
+    it('should return no groups for a person without faces', async () => {
+      const alice = person({ centroid: centroid(1, 0, 0) });
+      allowAccess(alice.personGroupId);
+      mocks.person.getFaceEmbeddings.mockResolvedValue([]);
+
+      await expect(sut.getGroups(authStub.admin, alice.personGroupId, { threshold: 0.4 })).resolves.toEqual({
+        threshold: 0.4,
+        truncated: false,
+        groups: [],
       });
+    });
+
+    it('should group faces and suggest who a group looks like', async () => {
+      const alice = person({ name: 'Alice', centroid: centroid(1, 0.2, 0) });
+      const bob = person({ name: 'Bob', centroid: centroid(0, 0, 1) });
+      const carol = person({ name: 'Carol', centroid: centroid(0, 1, 0) });
+      allowAccess(alice.personGroupId);
+      mocks.person.getCentroids.mockResolvedValue([alice, bob, carol]);
+
+      const assetId = newUuid();
+      const aliceFaces = [
+        face(centroid(1, 0, 0), assetId),
+        face(centroid(1, 0.1, 0), assetId),
+        face(centroid(1, 0, 0.1)),
+      ];
+      const bobFaces = [face(centroid(0, 0.1, 1)), face(centroid(0.1, 0, 1))];
+      mocks.person.getFaceEmbeddings.mockResolvedValue([bobFaces[0], ...aliceFaces, bobFaces[1]]);
+
+      const { groups, truncated } = await sut.getGroups(authStub.admin, alice.personGroupId, { threshold: 0.4 });
+
+      expect(truncated).toBe(false);
+      expect(groups).toHaveLength(2);
+      expect(groups[0]).toEqual(expect.objectContaining({ assetCount: 2, distanceToMain: 0, closestPerson: null }));
+      expect(groups[0].faces.map(({ id }) => id).toSorted()).toEqual(aliceFaces.map(({ id }) => id).toSorted());
+      expect(groups[1].closestPerson).toEqual({ id: bob.personGroupId, name: 'Bob', distance: expect.any(Number) });
+      expect(groups[1].distanceToMain).toBeGreaterThan(0.5);
+      expect(groups[1].faces.map(({ id }) => id).toSorted()).toEqual(bobFaces.map(({ id }) => id).toSorted());
+      expect(groups[1].faces[0]).toEqual(
+        expect.objectContaining({
+          fileCreatedAt: '2026-01-01T00:00:00.000Z',
+          imageWidth: 1000,
+          boundingBoxX1: 10,
+          distance: expect.any(Number),
+        }),
+      );
+    });
+
+    it('should reuse the people while regrouping', async () => {
+      const alice = person({ centroid: centroid(1, 0, 0) });
+      allowAccess(alice.personGroupId);
+      mocks.person.getCentroids.mockResolvedValue([alice]);
+      mocks.person.getFaceEmbeddings.mockResolvedValue([face(centroid(1, 0, 0))]);
+
+      await sut.getGroups(authStub.admin, alice.personGroupId, { threshold: 0.4 });
+      await sut.getGroups(authStub.admin, alice.personGroupId, { threshold: 0.3 });
+
+      expect(mocks.person.getCentroids).toHaveBeenCalledTimes(1);
+    });
+
+    it('should report when a person has too many faces', async () => {
+      const alice = person({ centroid: centroid(1, 0, 0) });
+      allowAccess(alice.personGroupId);
+      mocks.person.getCentroids.mockResolvedValue([alice]);
+      mocks.person.getFaceEmbeddings.mockResolvedValue(Array.from({ length: 5001 }, () => face(centroid(1, 0, 0))));
+
+      const { groups, truncated } = await sut.getGroups(authStub.admin, alice.personGroupId, { threshold: 0.4 });
+
+      expect(truncated).toBe(true);
+      expect(groups[0].faces).toHaveLength(5000);
     });
   });
 });

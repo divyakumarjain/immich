@@ -1731,6 +1731,56 @@ export type FaceGraphResponseDto = {
     edges: FaceGraphEdgeDto[];
     nodes: FaceGraphNodeDto[];
 };
+export type FaceGroupClosestPersonDto = {
+    /** Distance to the person, lower is more similar */
+    distance: number;
+    /** Person ID */
+    id: string;
+    /** Person name */
+    name: string;
+};
+export type FaceGroupFaceDto = {
+    /** Asset ID */
+    assetId: string;
+    /** Bounding box X1 coordinate */
+    boundingBoxX1: number;
+    /** Bounding box X2 coordinate */
+    boundingBoxX2: number;
+    /** Bounding box Y1 coordinate */
+    boundingBoxY1: number;
+    /** Bounding box Y2 coordinate */
+    boundingBoxY2: number;
+    /** Distance to the largest group, lower is more similar */
+    distance: number;
+    /** Date the asset was taken */
+    fileCreatedAt: string;
+    /** Face ID */
+    id: string;
+    /** Image height in pixels */
+    imageHeight: number;
+    /** Image width in pixels */
+    imageWidth: number;
+};
+export type FaceGroupDto = {
+    /** Number of assets in the group */
+    assetCount: number;
+    /** The other person that looks most like the group */
+    closestPerson: (FaceGroupClosestPersonDto) | null;
+    /** Distance to the largest group, lower is more similar */
+    distanceToMain: number;
+    /** Faces of the group, the most representative first */
+    faces: FaceGroupFaceDto[];
+    /** ID of the most representative face of the group */
+    id: string;
+};
+export type FaceGroupsResponseDto = {
+    /** Groups of similar faces, largest first */
+    groups: FaceGroupDto[];
+    /** Threshold used to create the groups */
+    threshold: number;
+    /** Whether only the most recent faces of the person were grouped */
+    truncated: boolean;
+};
 export type AssetFaceResponseDto = {
     /** Bounding box X1 coordinate */
     boundingBoxX1: number;
@@ -5505,6 +5555,22 @@ export function getFaceGraph({ maxDistance, minFaces, neighbors, withHidden }: {
         minFaces,
         neighbors,
         withHidden
+    }))}`, {
+        ...opts
+    }));
+}
+/**
+ * Retrieve the face groups of a person
+ */
+export function getFaceGroups({ id, threshold }: {
+    id: string;
+    threshold?: number;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: FaceGroupsResponseDto;
+    }>(`/face-graph/people/${encodeURIComponent(id)}/groups${QS.query(QS.explode({
+        threshold
     }))}`, {
         ...opts
     }));

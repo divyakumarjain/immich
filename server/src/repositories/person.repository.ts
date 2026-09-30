@@ -46,9 +46,10 @@ export interface PersonSearchOptions extends PersonFilterOptions {
   closestFaceAssetId?: string;
 }
 
-export interface PersonCentroidOptions {
-  minFaces: number;
-  withHidden: boolean;
+export interface FaceEmbeddingOptions {
+  userId: string;
+  personGroupId: string;
+  limit: number;
 }
 
 export interface PersonNameSearchOptions {
@@ -727,8 +728,8 @@ export class PersonRepository {
       assets: result ? Number(result.count) : 0,
     };
   }
-  @GenerateSql({ params: [DummyValue.UUID, { minFaces: 1, withHidden: false }] })
-  getCentroids(userId: string, { minFaces, withHidden }: PersonCentroidOptions) {
+  @GenerateSql({ params: [DummyValue.UUID] })
+  getCentroids(userId: string) {
     return this.db
       .selectFrom('asset_face')
       .innerJoin('asset', 'asset.id', 'asset_face.assetId')
@@ -745,10 +746,38 @@ export class PersonRepository {
       .where('asset.ownerId', '=', userId)
       .where('asset.visibility', '=', sql.lit(AssetVisibility.Timeline))
       .where('asset.deletedAt', 'is', null)
-      .$if(!withHidden, (qb) => qb.where('person.isHidden', '=', false))
       .groupBy(['person.ownerId', 'person.personGroupId'])
-      .having((eb) => eb.fn.countAll(), '>=', minFaces)
       .orderBy('person.personGroupId')
+      .execute();
+  }
+
+  @GenerateSql({ params: [{ userId: DummyValue.UUID, personGroupId: DummyValue.UUID, limit: 100 }] })
+  getFaceEmbeddings({ userId, personGroupId, limit }: FaceEmbeddingOptions) {
+    return this.db
+      .selectFrom('asset_face')
+      .innerJoin('asset', 'asset.id', 'asset_face.assetId')
+      .innerJoin('face_search', 'face_search.faceId', 'asset_face.id')
+      .select([
+        'asset_face.id',
+        'asset_face.assetId',
+        'asset_face.imageWidth',
+        'asset_face.imageHeight',
+        'asset_face.boundingBoxX1',
+        'asset_face.boundingBoxY1',
+        'asset_face.boundingBoxX2',
+        'asset_face.boundingBoxY2',
+        'asset.fileCreatedAt',
+        'face_search.embedding',
+      ])
+      .where('asset_face.personGroupId', '=', personGroupId)
+      .where('asset_face.deletedAt', 'is', null)
+      .where('asset_face.isVisible', 'is', true)
+      .where('asset.ownerId', '=', userId)
+      .where('asset.visibility', '=', sql.lit(AssetVisibility.Timeline))
+      .where('asset.deletedAt', 'is', null)
+      .orderBy('asset.fileCreatedAt', 'desc')
+      .orderBy('asset_face.id')
+      .limit(limit)
       .execute();
   }
 

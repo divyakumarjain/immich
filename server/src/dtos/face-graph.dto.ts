@@ -58,5 +58,64 @@ const FaceGraphResponseSchema = z
   })
   .meta({ id: 'FaceGraphResponseDto' });
 
+const FaceGroupsSchema = z
+  .object({
+    threshold: z.coerce
+      .number()
+      .min(0.05)
+      .max(1)
+      .default(0.4)
+      .meta({ format: 'double' })
+      .describe('Maximum distance of a face to its group, lower values create more groups'),
+  })
+  .meta({ id: 'FaceGroupsDto' });
+
+const FaceGroupFaceSchema = z
+  .object({
+    id: z.uuidv4().describe('Face ID'),
+    assetId: z.uuidv4().describe('Asset ID'),
+    // TODO: use `isoDatetimeToDate` when using `ZodSerializerDto` on the controllers.
+    fileCreatedAt: z.string().meta({ format: 'date-time' }).describe('Date the asset was taken'),
+    distance: z.number().meta({ format: 'double' }).describe('Distance to the largest group, lower is more similar'),
+    imageHeight: z.int().min(0).describe('Image height in pixels'),
+    imageWidth: z.int().min(0).describe('Image width in pixels'),
+    boundingBoxX1: z.int().describe('Bounding box X1 coordinate'),
+    boundingBoxX2: z.int().describe('Bounding box X2 coordinate'),
+    boundingBoxY1: z.int().describe('Bounding box Y1 coordinate'),
+    boundingBoxY2: z.int().describe('Bounding box Y2 coordinate'),
+  })
+  .meta({ id: 'FaceGroupFaceDto' });
+
+const FaceGroupClosestPersonSchema = z
+  .object({
+    id: z.uuidv4().describe('Person ID'),
+    name: z.string().describe('Person name'),
+    distance: z.number().meta({ format: 'double' }).describe('Distance to the person, lower is more similar'),
+  })
+  .meta({ id: 'FaceGroupClosestPersonDto' });
+
+const FaceGroupSchema = z
+  .object({
+    id: z.uuidv4().describe('ID of the most representative face of the group'),
+    assetCount: z.int().min(0).describe('Number of assets in the group'),
+    distanceToMain: z
+      .number()
+      .meta({ format: 'double' })
+      .describe('Distance to the largest group, lower is more similar'),
+    closestPerson: FaceGroupClosestPersonSchema.nullable().describe('The other person that looks most like the group'),
+    faces: z.array(FaceGroupFaceSchema).describe('Faces of the group, the most representative first'),
+  })
+  .meta({ id: 'FaceGroupDto' });
+
+const FaceGroupsResponseSchema = z
+  .object({
+    threshold: z.number().meta({ format: 'double' }).describe('Threshold used to create the groups'),
+    truncated: z.boolean().describe('Whether only the most recent faces of the person were grouped'),
+    groups: z.array(FaceGroupSchema).describe('Groups of similar faces, largest first'),
+  })
+  .meta({ id: 'FaceGroupsResponseDto' });
+
 export class FaceGraphDto extends createZodDto(FaceGraphSchema) {}
+export class FaceGroupsDto extends createZodDto(FaceGroupsSchema) {}
+export class FaceGroupsResponseDto extends createZodDto(FaceGroupsResponseSchema) {}
 export class FaceGraphResponseDto extends createZodDto(FaceGraphResponseSchema) {}

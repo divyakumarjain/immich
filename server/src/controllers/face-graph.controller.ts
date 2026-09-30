@@ -1,11 +1,12 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Param, Query } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import type { AuthDto } from 'src/dtos/auth.dto.js';
 import { Endpoint, HistoryBuilder } from 'src/decorators.js';
-import { FaceGraphDto, FaceGraphResponseDto } from 'src/dtos/face-graph.dto.js';
+import { FaceGraphDto, FaceGraphResponseDto, FaceGroupsDto, FaceGroupsResponseDto } from 'src/dtos/face-graph.dto.js';
 import { ApiTag, Permission } from 'src/enum.js';
 import { Auth, Authenticated } from 'src/middleware/auth.guard.js';
 import { FaceGraphService } from 'src/services/face-graph.service.js';
+import { UUIDParamDto } from 'src/validation.js';
 
 @ApiTags(ApiTag.People)
 @Controller('face-graph')
@@ -22,5 +23,21 @@ export class FaceGraphController {
   })
   getFaceGraph(@Auth() auth: AuthDto, @Query() dto: FaceGraphDto): Promise<FaceGraphResponseDto> {
     return this.service.getGraph(auth, dto);
+  }
+
+  @Get('people/:id/groups')
+  @Authenticated({ permission: Permission.PersonRead })
+  @Endpoint({
+    summary: 'Retrieve the face groups of a person',
+    description:
+      'Retrieve the faces of a person grouped by similarity. Groups that are far from the largest group may belong to a different person.',
+    history: new HistoryBuilder().added('v3.3.0').alpha('v3.3.0'),
+  })
+  getFaceGroups(
+    @Auth() auth: AuthDto,
+    @Param() { id }: UUIDParamDto,
+    @Query() dto: FaceGroupsDto,
+  ): Promise<FaceGroupsResponseDto> {
+    return this.service.getGroups(auth, id, dto);
   }
 }
