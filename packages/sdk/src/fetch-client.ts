@@ -1705,12 +1705,36 @@ export type FaceGraphEdgeDto = {
     /** Node ID */
     target: string;
 };
+export type FaceGroupFaceDto = {
+    /** Asset ID */
+    assetId: string;
+    /** Bounding box X1 coordinate */
+    boundingBoxX1: number;
+    /** Bounding box X2 coordinate */
+    boundingBoxX2: number;
+    /** Bounding box Y1 coordinate */
+    boundingBoxY1: number;
+    /** Bounding box Y2 coordinate */
+    boundingBoxY2: number;
+    /** Distance to the largest group, lower is more similar */
+    distance: number;
+    /** Date the asset was taken */
+    fileCreatedAt: string;
+    /** Face ID */
+    id: string;
+    /** Image height in pixels */
+    imageHeight: number;
+    /** Image width in pixels */
+    imageWidth: number;
+};
 export type FaceGraphNodeDto = {
     /** Number of assets the person appears in */
     assetCount: number;
+    /** The most representative face, for unassigned faces only */
+    face: (FaceGroupFaceDto) | null;
     /** Number of faces assigned to the person */
     faceCount: number;
-    /** Person ID */
+    /** Person ID, or the ID of the most representative face for unassigned faces */
     id: string;
     /** Is favorite */
     isFavorite: boolean;
@@ -1738,28 +1762,6 @@ export type FaceGroupClosestPersonDto = {
     id: string;
     /** Person name */
     name: string;
-};
-export type FaceGroupFaceDto = {
-    /** Asset ID */
-    assetId: string;
-    /** Bounding box X1 coordinate */
-    boundingBoxX1: number;
-    /** Bounding box X2 coordinate */
-    boundingBoxX2: number;
-    /** Bounding box Y1 coordinate */
-    boundingBoxY1: number;
-    /** Bounding box Y2 coordinate */
-    boundingBoxY2: number;
-    /** Distance to the largest group, lower is more similar */
-    distance: number;
-    /** Date the asset was taken */
-    fileCreatedAt: string;
-    /** Face ID */
-    id: string;
-    /** Image height in pixels */
-    imageHeight: number;
-    /** Image width in pixels */
-    imageWidth: number;
 };
 export type FaceGroupDto = {
     /** Number of assets in the group */
@@ -5541,11 +5543,12 @@ export function deleteDuplicate({ id }: {
 /**
  * Retrieve the face graph
  */
-export function getFaceGraph({ maxDistance, minFaces, neighbors, withHidden }: {
+export function getFaceGraph({ maxDistance, minFaces, neighbors, withHidden, withUnassigned }: {
     maxDistance?: number;
     minFaces?: number;
     neighbors?: number;
     withHidden?: boolean;
+    withUnassigned?: boolean;
 }, opts?: Oazapfts.RequestOpts) {
     return oazapfts.ok(oazapfts.fetchJson<{
         status: 200;
@@ -5554,7 +5557,8 @@ export function getFaceGraph({ maxDistance, minFaces, neighbors, withHidden }: {
         maxDistance,
         minFaces,
         neighbors,
-        withHidden
+        withHidden,
+        withUnassigned
     }))}`, {
         ...opts
     }));
@@ -5570,6 +5574,22 @@ export function getFaceGroups({ id, threshold }: {
         status: 200;
         data: FaceGroupsResponseDto;
     }>(`/face-graph/people/${encodeURIComponent(id)}/groups${QS.query(QS.explode({
+        threshold
+    }))}`, {
+        ...opts
+    }));
+}
+/**
+ * Retrieve the face groups of unassigned faces
+ */
+export function getUnassignedFaceGroups({ id, threshold }: {
+    id: string;
+    threshold?: number;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: FaceGroupsResponseDto;
+    }>(`/face-graph/unassigned/${encodeURIComponent(id)}/groups${QS.query(QS.explode({
         threshold
     }))}`, {
         ...opts

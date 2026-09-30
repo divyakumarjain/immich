@@ -73,6 +73,7 @@ describe(FaceGraphService.name, () => {
           {
             id: alice.personGroupId,
             kind: FaceGraphNodeKind.Person,
+            face: null,
             name: 'Alice',
             isHidden: false,
             isFavorite: false,
@@ -121,6 +122,71 @@ describe(FaceGraphService.name, () => {
       await sut.getGraph(authStub.admin, { minFaces: 1, neighbors: 5 });
 
       expect(mocks.person.getCentroids).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('getGraph with unassigned faces', () => {
+    it('should not load unassigned faces by default', async () => {
+      mocks.person.getCentroids.mockResolvedValue([]);
+
+      await sut.getGraph(authStub.admin, { minFaces: 1, neighbors: 5 });
+
+      expect(mocks.person.getFaceEmbeddings).not.toHaveBeenCalled();
+    });
+
+    it('should add groups of similar unassigned faces', async () => {
+      const alice = person({ centroid: centroid(1, 0, 0) });
+      const stranger = [face(centroid(0, 1, 0)), face(centroid(0, 1, 0.1)), face(centroid(0, 1, -0.1))];
+      const single = face(centroid(0, 0, 1));
+      mocks.person.getCentroids.mockResolvedValue([alice]);
+      mocks.person.getFaceEmbeddings.mockResolvedValue([single, ...stranger]);
+
+      const { nodes } = await sut.getGraph(authStub.admin, { minFaces: 1, neighbors: 5, withUnassigned: true });
+
+      expect(mocks.person.getFaceEmbeddings).toHaveBeenCalledWith({
+        userId: authStub.admin.user.id,
+        personGroupId: null,
+        limit: 2001,
+      });
+      expect(nodes).toHaveLength(2);
+      expect(nodes[1]).toEqual(
+        expect.objectContaining({
+          id: stranger[0].id,
+          kind: FaceGraphNodeKind.Unassigned,
+          name: '',
+          assetCount: 3,
+          faceCount: 3,
+          face: expect.objectContaining({ id: stranger[0].id, assetId: stranger[0].assetId, boundingBoxX1: 10 }),
+        }),
+      );
+    });
+  });
+
+  describe('getUnassignedGroups', () => {
+    it('should fail for a face that is not part of a group', async () => {
+      const single = face(centroid(0, 0, 1));
+      mocks.person.getFaceEmbeddings.mockResolvedValue([single]);
+
+      await expect(sut.getUnassignedGroups(authStub.admin, single.id, { threshold: 0.4 })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      await expect(sut.getUnassignedGroups(authStub.admin, newUuid(), { threshold: 0.4 })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it('should return the group and who it looks like', async () => {
+      const alice = person({ name: 'Alice', centroid: centroid(1, 0, 0) });
+      const bob = person({ name: 'Bob', centroid: centroid(0, 1, 0.2) });
+      const stranger = [face(centroid(0, 1, 0)), face(centroid(0, 1, 0.1)), face(centroid(0, 1, -0.1))];
+      mocks.person.getCentroids.mockResolvedValue([alice, bob]);
+      mocks.person.getFaceEmbeddings.mockResolvedValue([face(centroid(0, 0, 1)), ...stranger]);
+
+      const { groups } = await sut.getUnassignedGroups(authStub.admin, stranger[2].id, { threshold: 0.4 });
+
+      expect(groups).toHaveLength(1);
+      expect(groups[0].faces.map(({ id }) => id).toSorted()).toEqual(stranger.map(({ id }) => id).toSorted());
+      expect(groups[0].closestPerson).toEqual({ id: bob.personGroupId, name: 'Bob', distance: expect.any(Number) });
     });
   });
 

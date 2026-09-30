@@ -48,7 +48,8 @@ export interface PersonSearchOptions extends PersonFilterOptions {
 
 export interface FaceEmbeddingOptions {
   userId: string;
-  personGroupId: string;
+  /** `null` selects the faces that are not assigned to a person */
+  personGroupId: string | null;
   limit: number;
 }
 
@@ -769,7 +770,8 @@ export class PersonRepository {
         'asset.fileCreatedAt',
         'face_search.embedding',
       ])
-      .where('asset_face.personGroupId', '=', personGroupId)
+      .$if(personGroupId !== null, (qb) => qb.where('asset_face.personGroupId', '=', personGroupId))
+      .$if(personGroupId === null, (qb) => qb.where('asset_face.personGroupId', 'is', null))
       .where('asset_face.deletedAt', 'is', null)
       .where('asset_face.isVisible', 'is', true)
       .where('asset.ownerId', '=', userId)

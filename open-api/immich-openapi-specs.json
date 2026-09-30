@@ -7026,6 +7026,15 @@
             "schema": {
               "type": "boolean"
             }
+          },
+          {
+            "name": "withUnassigned",
+            "required": false,
+            "in": "query",
+            "description": "Include groups of similar faces that are not assigned to a person",
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -7136,6 +7145,76 @@
           }
         ],
         "x-immich-permission": "person.read",
+        "x-immich-state": "Alpha"
+      }
+    },
+    "/face-graph/unassigned/{id}/groups": {
+      "get": {
+        "description": "Retrieve a group of similar faces that are not assigned to a person, identified by the ID of one of its faces, split further by similarity.",
+        "operationId": "getUnassignedFaceGroups",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          },
+          {
+            "name": "threshold",
+            "required": false,
+            "in": "query",
+            "description": "Maximum distance of a face to its group, lower values create more groups",
+            "schema": {
+              "minimum": 0.05,
+              "maximum": 1,
+              "format": "double",
+              "default": 0.4,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FaceGroupsResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Retrieve the face groups of unassigned faces",
+        "tags": [
+          "People"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.3.0",
+            "state": "Added"
+          },
+          {
+            "version": "v3.3.0",
+            "state": "Alpha"
+          }
+        ],
+        "x-immich-permission": "face.read",
         "x-immich-state": "Alpha"
       }
     },
@@ -22764,6 +22843,15 @@
             "minimum": 0,
             "type": "integer"
           },
+          "face": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/FaceGroupFaceDto"
+              }
+            ],
+            "description": "The most representative face, for unassigned faces only",
+            "nullable": true
+          },
           "faceCount": {
             "description": "Number of faces assigned to the person",
             "maximum": 9007199254740991,
@@ -22771,7 +22859,7 @@
             "type": "integer"
           },
           "id": {
-            "description": "Person ID",
+            "description": "Person ID, or the ID of the most representative face for unassigned faces",
             "format": "uuid",
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
             "type": "string"
@@ -22809,6 +22897,7 @@
         },
         "required": [
           "assetCount",
+          "face",
           "faceCount",
           "id",
           "isFavorite",

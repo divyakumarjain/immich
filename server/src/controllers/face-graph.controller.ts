@@ -40,4 +40,20 @@ export class FaceGraphController {
   ): Promise<FaceGroupsResponseDto> {
     return this.service.getGroups(auth, id, dto);
   }
+
+  @Get('unassigned/:id/groups')
+  @Authenticated({ permission: Permission.FaceRead })
+  @Endpoint({
+    summary: 'Retrieve the face groups of unassigned faces',
+    description:
+      'Retrieve a group of similar faces that are not assigned to a person, identified by the ID of one of its faces, split further by similarity.',
+    history: new HistoryBuilder().added('v3.3.0').alpha('v3.3.0'),
+  })
+  getUnassignedFaceGroups(
+    @Auth() auth: AuthDto,
+    @Param() { id }: UUIDParamDto,
+    @Query() dto: FaceGroupsDto,
+  ): Promise<FaceGroupsResponseDto> {
+    return this.service.getUnassignedGroups(auth, id, dto);
+  }
 }

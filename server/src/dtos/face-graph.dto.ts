@@ -16,6 +16,9 @@ const FaceGraphSchema = z
   .object({
     minFaces: z.coerce.number().int().min(1).default(1).describe('Only include people with at least this many faces'),
     withHidden: stringToBool.optional().describe('Include hidden people'),
+    withUnassigned: stringToBool
+      .optional()
+      .describe('Include groups of similar faces that are not assigned to a person'),
     neighbors: z.coerce.number().int().min(1).max(20).default(5).describe('Maximum number of similar people to link'),
     maxDistance: z.coerce
       .number()
@@ -27,10 +30,27 @@ const FaceGraphSchema = z
   })
   .meta({ id: 'FaceGraphDto' });
 
+const FaceGroupFaceSchema = z
+  .object({
+    id: z.uuidv4().describe('Face ID'),
+    assetId: z.uuidv4().describe('Asset ID'),
+    // TODO: use `isoDatetimeToDate` when using `ZodSerializerDto` on the controllers.
+    fileCreatedAt: z.string().meta({ format: 'date-time' }).describe('Date the asset was taken'),
+    distance: z.number().meta({ format: 'double' }).describe('Distance to the largest group, lower is more similar'),
+    imageHeight: z.int().min(0).describe('Image height in pixels'),
+    imageWidth: z.int().min(0).describe('Image width in pixels'),
+    boundingBoxX1: z.int().describe('Bounding box X1 coordinate'),
+    boundingBoxX2: z.int().describe('Bounding box X2 coordinate'),
+    boundingBoxY1: z.int().describe('Bounding box Y1 coordinate'),
+    boundingBoxY2: z.int().describe('Bounding box Y2 coordinate'),
+  })
+  .meta({ id: 'FaceGroupFaceDto' });
+
 const FaceGraphNodeSchema = z
   .object({
-    id: z.uuidv4().describe('Person ID'),
+    id: z.uuidv4().describe('Person ID, or the ID of the most representative face for unassigned faces'),
     kind: FaceGraphNodeKindSchema,
+    face: FaceGroupFaceSchema.nullable().describe('The most representative face, for unassigned faces only'),
     name: z.string().describe('Person name'),
     isHidden: z.boolean().describe('Is hidden'),
     isFavorite: z.boolean().describe('Is favorite'),
@@ -69,22 +89,6 @@ const FaceGroupsSchema = z
       .describe('Maximum distance of a face to its group, lower values create more groups'),
   })
   .meta({ id: 'FaceGroupsDto' });
-
-const FaceGroupFaceSchema = z
-  .object({
-    id: z.uuidv4().describe('Face ID'),
-    assetId: z.uuidv4().describe('Asset ID'),
-    // TODO: use `isoDatetimeToDate` when using `ZodSerializerDto` on the controllers.
-    fileCreatedAt: z.string().meta({ format: 'date-time' }).describe('Date the asset was taken'),
-    distance: z.number().meta({ format: 'double' }).describe('Distance to the largest group, lower is more similar'),
-    imageHeight: z.int().min(0).describe('Image height in pixels'),
-    imageWidth: z.int().min(0).describe('Image width in pixels'),
-    boundingBoxX1: z.int().describe('Bounding box X1 coordinate'),
-    boundingBoxX2: z.int().describe('Bounding box X2 coordinate'),
-    boundingBoxY1: z.int().describe('Bounding box Y1 coordinate'),
-    boundingBoxY2: z.int().describe('Bounding box Y2 coordinate'),
-  })
-  .meta({ id: 'FaceGroupFaceDto' });
 
 const FaceGroupClosestPersonSchema = z
   .object({
