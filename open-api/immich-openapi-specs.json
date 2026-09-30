@@ -6977,6 +6977,98 @@
         "x-immich-state": "Stable"
       }
     },
+    "/face-graph": {
+      "get": {
+        "description": "Retrieve the people of the authenticated user as a graph, in which people with similar faces are linked and positioned close to each other.",
+        "operationId": "getFaceGraph",
+        "parameters": [
+          {
+            "name": "maxDistance",
+            "required": false,
+            "in": "query",
+            "description": "Maximum distance between linked people, defaults to the facial recognition distance",
+            "schema": {
+              "minimum": 0,
+              "maximum": 2,
+              "format": "double",
+              "type": "number"
+            }
+          },
+          {
+            "name": "minFaces",
+            "required": false,
+            "in": "query",
+            "description": "Only include people with at least this many faces",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "default": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "neighbors",
+            "required": false,
+            "in": "query",
+            "description": "Maximum number of similar people to link",
+            "schema": {
+              "minimum": 1,
+              "maximum": 20,
+              "default": 5,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "withHidden",
+            "required": false,
+            "in": "query",
+            "description": "Include hidden people",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FaceGraphResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Retrieve the face graph",
+        "tags": [
+          "People"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.3.0",
+            "state": "Added"
+          },
+          {
+            "version": "v3.3.0",
+            "state": "Alpha"
+          }
+        ],
+        "x-immich-permission": "person.read",
+        "x-immich-state": "Alpha"
+      }
+    },
     "/faces": {
       "get": {
         "description": "Retrieve all faces belonging to an asset.",
@@ -22564,6 +22656,128 @@
         },
         "required": [
           "id"
+        ],
+        "type": "object"
+      },
+      "FaceGraphEdgeDto": {
+        "properties": {
+          "distance": {
+            "description": "Distance between the two nodes, lower is more similar",
+            "format": "double",
+            "type": "number"
+          },
+          "source": {
+            "description": "Node ID",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+            "type": "string"
+          },
+          "target": {
+            "description": "Node ID",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "distance",
+          "source",
+          "target"
+        ],
+        "type": "object"
+      },
+      "FaceGraphNodeDto": {
+        "properties": {
+          "assetCount": {
+            "description": "Number of assets the person appears in",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "faceCount": {
+            "description": "Number of faces assigned to the person",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "description": "Person ID",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+            "type": "string"
+          },
+          "isFavorite": {
+            "description": "Is favorite",
+            "type": "boolean"
+          },
+          "isHidden": {
+            "description": "Is hidden",
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/FaceGraphNodeKind"
+          },
+          "name": {
+            "description": "Person name",
+            "type": "string"
+          },
+          "updatedAt": {
+            "description": "Last update date",
+            "format": "date-time",
+            "type": "string"
+          },
+          "x": {
+            "description": "Suggested horizontal position, between -1 and 1",
+            "format": "double",
+            "type": "number"
+          },
+          "y": {
+            "description": "Suggested vertical position, between -1 and 1",
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "assetCount",
+          "faceCount",
+          "id",
+          "isFavorite",
+          "isHidden",
+          "kind",
+          "name",
+          "updatedAt",
+          "x",
+          "y"
+        ],
+        "type": "object"
+      },
+      "FaceGraphNodeKind": {
+        "description": "Whether the node is a person or a group of faces that are not assigned to a person",
+        "enum": [
+          "person",
+          "unassigned"
+        ],
+        "type": "string"
+      },
+      "FaceGraphResponseDto": {
+        "properties": {
+          "edges": {
+            "description": "Links between similar nodes",
+            "items": {
+              "$ref": "#/components/schemas/FaceGraphEdgeDto"
+            },
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/FaceGraphNodeDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "edges",
+          "nodes"
         ],
         "type": "object"
       },

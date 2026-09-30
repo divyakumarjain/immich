@@ -13,6 +13,7 @@ import { DatabaseBackupService } from 'src/services/database-backup.service.js';
 import { DatabaseService } from 'src/services/database.service.js';
 import { DownloadService } from 'src/services/download.service.js';
 import { DuplicateService } from 'src/services/duplicate.service.js';
+import { FaceGraphService } from 'src/services/face-graph.service.js';
 import { HlsService } from 'src/services/hls.service.js';
 import { IntegrityService } from 'src/services/integrity.service.js';
 import { JobService } from 'src/services/job.service.js';
@@ -67,6 +68,7 @@ export const services = [
   DatabaseService,
   DownloadService,
   DuplicateService,
+  FaceGraphService,
   IntegrityService,
   HlsService,
   JobService,

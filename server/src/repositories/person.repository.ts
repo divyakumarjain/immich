@@ -46,6 +46,11 @@ export interface PersonSearchOptions extends PersonFilterOptions {
   closestFaceAssetId?: string;
 }
 
+export interface PersonCentroidOptions {
+  minFaces: number;
+  withHidden: boolean;
+}
+
 export interface PersonNameSearchOptions {
   withHidden?: boolean;
 }
@@ -722,6 +727,31 @@ export class PersonRepository {
       assets: result ? Number(result.count) : 0,
     };
   }
+  @GenerateSql({ params: [DummyValue.UUID, { minFaces: 1, withHidden: false }] })
+  getCentroids(userId: string, { minFaces, withHidden }: PersonCentroidOptions) {
+    return this.db
+      .selectFrom('asset_face')
+      .innerJoin('asset', 'asset.id', 'asset_face.assetId')
+      .innerJoin('face_search', 'face_search.faceId', 'asset_face.id')
+      .innerJoin('person', (join) =>
+        join.onRef('person.personGroupId', '=', 'asset_face.personGroupId').on('person.ownerId', '=', userId),
+      )
+      .select(['person.personGroupId', 'person.name', 'person.isHidden', 'person.isFavorite', 'person.updatedAt'])
+      .select(sql<string>`avg(face_search.embedding)::text`.as('centroid'))
+      .select((eb) => eb.fn.count(eb.fn('distinct', ['asset.id'])).as('assetCount'))
+      .select((eb) => eb.fn.countAll().as('faceCount'))
+      .where('asset_face.deletedAt', 'is', null)
+      .where('asset_face.isVisible', 'is', true)
+      .where('asset.ownerId', '=', userId)
+      .where('asset.visibility', '=', sql.lit(AssetVisibility.Timeline))
+      .where('asset.deletedAt', 'is', null)
+      .$if(!withHidden, (qb) => qb.where('person.isHidden', '=', false))
+      .groupBy(['person.ownerId', 'person.personGroupId'])
+      .having((eb) => eb.fn.countAll(), '>=', minFaces)
+      .orderBy('person.personGroupId')
+      .execute();
+  }
+
   @GenerateSql({ params: [DummyValue.UUID] })
   getNumberOfPeople(userId: string, options?: PersonFilterOptions) {
     const zero = sql.lit(0);

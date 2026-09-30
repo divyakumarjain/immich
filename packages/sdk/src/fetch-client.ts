@@ -1697,6 +1697,40 @@ export type DuplicateResolveDto = {
     /** List of duplicate groups to resolve */
     groups: DuplicateResolveGroupDto[];
 };
+export type FaceGraphEdgeDto = {
+    /** Distance between the two nodes, lower is more similar */
+    distance: number;
+    /** Node ID */
+    source: string;
+    /** Node ID */
+    target: string;
+};
+export type FaceGraphNodeDto = {
+    /** Number of assets the person appears in */
+    assetCount: number;
+    /** Number of faces assigned to the person */
+    faceCount: number;
+    /** Person ID */
+    id: string;
+    /** Is favorite */
+    isFavorite: boolean;
+    /** Is hidden */
+    isHidden: boolean;
+    kind: FaceGraphNodeKind;
+    /** Person name */
+    name: string;
+    /** Last update date */
+    updatedAt: string;
+    /** Suggested horizontal position, between -1 and 1 */
+    x: number;
+    /** Suggested vertical position, between -1 and 1 */
+    y: number;
+};
+export type FaceGraphResponseDto = {
+    /** Links between similar nodes */
+    edges: FaceGraphEdgeDto[];
+    nodes: FaceGraphNodeDto[];
+};
 export type AssetFaceResponseDto = {
     /** Bounding box X1 coordinate */
     boundingBoxX1: number;
@@ -5455,6 +5489,27 @@ export function deleteDuplicate({ id }: {
     }));
 }
 /**
+ * Retrieve the face graph
+ */
+export function getFaceGraph({ maxDistance, minFaces, neighbors, withHidden }: {
+    maxDistance?: number;
+    minFaces?: number;
+    neighbors?: number;
+    withHidden?: boolean;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: FaceGraphResponseDto;
+    }>(`/face-graph${QS.query(QS.explode({
+        maxDistance,
+        minFaces,
+        neighbors,
+        withHidden
+    }))}`, {
+        ...opts
+    }));
+}
+/**
  * Retrieve faces for asset
  */
 export function getFaces({ id }: {
@@ -8299,6 +8354,10 @@ export enum AssetMediaSize {
     Fullsize = "fullsize",
     Preview = "preview",
     Thumbnail = "thumbnail"
+}
+export enum FaceGraphNodeKind {
+    Person = "person",
+    Unassigned = "unassigned"
 }
 export enum SourceType {
     MachineLearning = "machine-learning",
