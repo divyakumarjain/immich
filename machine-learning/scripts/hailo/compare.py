@@ -22,7 +22,7 @@ from typing import Any
 import numpy as np
 import onnxruntime as ort
 from numpy.typing import NDArray
-from PIL import Image
+from PIL import Image, ImageOps
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # machine-learning/, for immich_ml's host-side helpers
 
@@ -94,6 +94,8 @@ def aligned(onnx: Outputs, hef: Outputs, pairs: dict[str, str]) -> Outputs:
 
 
 def cosine_rows(a: NDArray[np.float32], b: NDArray[np.float32]) -> NDArray[np.float32]:
+    if len(a) == 0:  # a photo without faces
+        return np.empty(0, dtype=np.float32)
     a, b = a.reshape(len(a), -1), b.reshape(len(b), -1)
     return np.sum(a * b, axis=1) / (np.linalg.norm(a, axis=1) * np.linalg.norm(b, axis=1) + 1e-12)
 
@@ -135,7 +137,8 @@ def latency(values: list[float]) -> dict[str, float]:
 
 def load_images(root: Path, limit: int | None) -> list[tuple[str, Image.Image]]:
     paths = sorted(p for p in ([root] if root.is_file() else root.rglob("*")) if p.suffix.lower() in IMAGE_SUFFIXES)
-    return [(p.name, decode_pil(Image.open(p))) for p in paths[:limit]]
+    # the server hands ML an upright preview, so a phone photo's EXIF rotation is applied here as well
+    return [(p.name, decode_pil(ImageOps.exif_transpose(Image.open(p)))) for p in paths[:limit]]
 
 
 # ── tensor ────────────────────────────────────────────────────────────
@@ -292,14 +295,18 @@ def run_face(args: argparse.Namespace) -> dict[str, Any]:
         if det.hef:
             found = detect(timed(lambda: det.run_hef(canvas[None]), ms["det_hef"]), scale, args.min_score)
             pairs = match(reference["boxes"], found["boxes"])
-            landmark_px = [float(np.abs(reference["landmarks"][i] - found["landmarks"][j]).max()) for i, j in pairs]
+            # landmark error as a fraction of the face's width, which a 12 MP photo and a 640 px one share
+            width = reference["boxes"][:, 2] - reference["boxes"][:, 0]
+            landmark = [
+                float(np.abs(reference["landmarks"][i] - found["landmarks"][j]).max() / width[i]) for i, j in pairs
+            ]
             det_rows.append(
                 {
                     "image": name,
                     "onnx_faces": len(reference["boxes"]),
                     "hef_faces": len(found["boxes"]),
                     "matched": len(pairs),
-                    "landmark_px_max": max(landmark_px, default=0.0),
+                    "landmark_err_max": max(landmark, default=0.0),
                     "score_abs_diff_max": max(
                         (float(abs(reference["scores"][i] - found["scores"][j])) for i, j in pairs), default=0.0
                     ),
@@ -321,7 +328,7 @@ def run_face(args: argparse.Namespace) -> dict[str, Any]:
         summary["det"] = {
             "recall": matched / onnx_total if onnx_total else 1.0,
             "precision": matched / hef_total if hef_total else 1.0,
-            "landmark_px": stats([r["landmark_px_max"] for r in det_rows]),
+            "landmark_err": stats([r["landmark_err_max"] for r in det_rows if r["matched"]]),
             "score_abs_diff": stats([r["score_abs_diff_max"] for r in det_rows]),
         }
     if len(all_onnx) > 1:
