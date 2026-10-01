@@ -19,6 +19,7 @@ class HefNode:
     dtype: str  # the on-chip type, before HailoRT (de)quantizes to the float32 this wrapper exchanges
     qp_scale: float
     qp_zp: float
+    original: tuple[str, ...]  # the source graph's nodes fused into this one; the last produces its tensor
 
 
 @cache
@@ -31,13 +32,18 @@ def _vdevice() -> Any:
     return hpf.VDevice(params)
 
 
-def _node(info: Any) -> HefNode:
+def _node(hef: Any, info: Any) -> HefNode:
+    try:
+        original = tuple(hef.get_original_names_from_vstream_name(info.name))
+    except Exception:  # inputs, and HEFs built without the parser's name records
+        original = ()
     return HefNode(
         name=info.name,
         shape=tuple(info.shape),
         dtype=str(info.format.type).rsplit(".", 1)[-1],
         qp_scale=float(info.quant_info.qp_scale),
         qp_zp=float(info.quant_info.qp_zp),
+        original=original,
     )
 
 
@@ -52,8 +58,8 @@ class HefModel:
         hef = hpf.HEF(path.as_posix())
         configure = hpf.ConfigureParams.create_from_hef(hef, interface=hpf.HailoStreamInterface.PCIe)
         self.network_group = _vdevice().configure(hef, configure)[0]
-        self.inputs = [_node(info) for info in hef.get_input_vstream_infos()]
-        self.outputs = [_node(info) for info in hef.get_output_vstream_infos()]
+        self.inputs = [_node(hef, info) for info in hef.get_input_vstream_infos()]
+        self.outputs = [_node(hef, info) for info in hef.get_output_vstream_infos()]
         self._pipeline = hpf.InferVStreams(
             self.network_group,
             hpf.InputVStreamParams.make(self.network_group, format_type=hpf.FormatType.FLOAT32),

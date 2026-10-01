@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import onnx
 import onnxruntime as ort
 from numpy.typing import NDArray
 from PIL import Image, ImageOps
@@ -53,17 +54,52 @@ class OnnxModel:
         return dict(zip(self.outputs, (widen(o) for o in self.session.run(None, {self.input: blob}))))
 
 
-class HefFeed:
-    """A HEF with normalization folded in takes raw pixels; one compiled without it takes them normalized."""
+class HostTail:
+    """The part of the ONNX past the compile's cut, run on CPU over the HEF's outputs, as a session would.
 
-    def __init__(self, model: HefModel, normalized: bool, mean: float, std: float) -> None:
+    A HEF compiled from this very ONNX names the nodes each output came from, so the tail is cut out of the
+    reference graph itself instead of being ported by hand; outputs then compare 1:1 under the ONNX's names."""
+
+    def __init__(self, path: Path, hef: HefModel) -> None:
+        model = onnx.load(path.as_posix())
+        produces = {node.name: node.output[0] for node in model.graph.node}
+        self.cut: dict[str, str] = {}  # hef output -> onnx tensor
+        for node in hef.outputs:
+            found = [produces[name] for name in node.original if name in produces]
+            if not found:
+                raise LookupError(f"{node.name} names no node of {path.name}")
+            self.cut[node.name] = found[-1]
+        self.outputs = [output.name for output in model.graph.output]
+        tail = onnx.utils.Extractor(model).extract_model(list(self.cut.values()), self.outputs)
+        self.session = ort.InferenceSession(tail.SerializeToString(), providers=["CPUExecutionProvider"])
+        self.rank = {node.name: len(node.shape) for node in self.session.get_inputs()}
+
+    def run(self, compiled: Outputs) -> Outputs:
+        feeds = {}
+        for output, tensor in self.cut.items():
+            value = compiled[output]
+            # HailoRT hands back NHWC; the graph's tensors are NCHW, or flat rows past a Gemm
+            feeds[tensor] = value.transpose(0, 3, 1, 2) if self.rank[tensor] == 4 else value.reshape(len(value), -1)
+        return dict(zip(self.outputs, (widen(o) for o in self.session.run(None, feeds))))
+
+
+class HefFeed:
+    """A HEF with normalization folded in takes raw pixels; one compiled without it takes them normalized.
+    Compiled from `onnx` itself, its outputs are carried through that graph's tail and named like it."""
+
+    def __init__(self, model: HefModel, normalized: bool, mean: float, std: float, onnx_path: Path) -> None:
         self.model, self.normalized, self.mean, self.std = model, normalized, mean, std
+        try:
+            self.tail: HostTail | None = HostTail(onnx_path, model)
+        except LookupError:  # e.g. a Model Zoo HEF, compiled from some other export of the model
+            self.tail = None
 
     def run(self, nhwc: NDArray[np.uint8]) -> Outputs:
         blob = nhwc.astype(np.float32)
         if self.normalized:
             blob = normalize(blob, self.mean, self.std)
-        return self.model.run({self.model.inputs[0].name: blob})
+        compiled = self.model.run({self.model.inputs[0].name: blob})
+        return self.tail.run(compiled) if self.tail else compiled
 
 
 def pair_outputs(onnx: Outputs, hef: Outputs, forced: dict[str, str]) -> dict[str, str]:
@@ -73,6 +109,8 @@ def pair_outputs(onnx: Outputs, hef: Outputs, forced: dict[str, str]) -> dict[st
     # both sides hold one frame here; a legacy ONNX output may carry no batch axis, so count every element
     size = {name: array.size for name, array in onnx.items()}
     hef_size = {name: array.size for name, array in hef.items()}
+    if set(hef) == set(onnx):  # carried through the host tail
+        return {name: name for name in onnx}
     pairs = dict(forced)
     candidates = {
         o: [h for h in hef if hef_size[h] == size[o] and h not in forced.values()] for o in onnx if o not in forced
@@ -147,7 +185,7 @@ def load_images(root: Path, limit: int | None) -> list[tuple[str, Image.Image]]:
 def run_tensor(args: argparse.Namespace) -> dict[str, Any]:
     hef = HefModel(args.hef)
     onnx = OnnxModel(args.onnx, args.mean, args.std)
-    feed = HefFeed(hef, args.hef_normalized, args.mean, args.std)
+    feed = HefFeed(hef, args.hef_normalized, args.mean, args.std, args.onnx)
     height, width = hef.inputs[0].shape[:2]
     forced = dict(item.split("=", 1) for item in args.output_map)
     pairs: dict[str, str] | None = None
@@ -215,7 +253,7 @@ class FaceStage:
     def __init__(self, onnx: OnnxModel, hef: HefModel | None, normalized: bool, forced: dict[str, str]) -> None:
         self.onnx = onnx
         self.hef = hef
-        self.feed = HefFeed(hef, normalized, onnx.mean, onnx.std) if hef else None
+        self.feed = HefFeed(hef, normalized, onnx.mean, onnx.std, onnx.path) if hef else None
         self.forced = forced
         self.pairs: dict[str, str] | None = None
 
