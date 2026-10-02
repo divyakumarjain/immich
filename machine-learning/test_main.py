@@ -160,9 +160,9 @@ class TestBase:
     def test_opens_the_hef_compiled_for_the_device(self, mocker: MockerFixture) -> None:
         mocker.patch("immich_ml.sessions.hailo.architecture", "hailo8l")
 
-        assert hailo_model_path(Path("/cache/detection")) == Path("/cache/detection/hailo/hailo8l/model.hef")
+        assert hailo_model_path(Path("/cache/detection")) == Path("/cache/detection/hailo/hailo8l/model.json")
         detector = FaceDetector("buffalo_l", cache_dir="/cache", model_format=ModelFormat.HAILO)
-        assert detector.model_path == Path("/cache/detection/hailo/hailo8l/model.hef")
+        assert detector.model_path == Path("/cache/detection/hailo/hailo8l/model.json")
 
     def test_download_downloads_hailo_if_preferred_format(self, snapshot_download: mock.Mock) -> None:
         encoder = FaceRecognizer("buffalo_l", model_format=ModelFormat.HAILO)
@@ -1064,35 +1064,51 @@ def _contract(model_dir: Path, cut: dict[str, str], **extra: Any) -> Path:
     model_dir.mkdir(parents=True, exist_ok=True)
     (model_dir / "model.json").write_text(json.dumps({"input": "image", "cut": cut, **extra}))
     (model_dir / "model.hef").touch()
-    return model_dir / "model.hef"
+    return model_dir / "model.json"
+
+
+def _graphs(root: Path, widths: list[int]) -> Path:
+    """A model compiled once per line width, as OCR recognition is: an index over a graph directory per shape."""
+    for width in widths:
+        _contract(root / f"width{width}", {"net/fc1": "683"}, dims=[{"width": width}])
+        _tail(root / f"width{width}" / "tail.onnx", "683", ["batch", 512], "Identity")
+    (root / "model.json").write_text(json.dumps({"graphs": [f"width{width}" for width in widths]}))
+    return root / "model.json"
 
 
 class TestHailoSession:
     def test_feeds_raw_pixels_and_replays_the_tail(self, hailo: SimpleNamespace, tmp_path: Path) -> None:
         _tail(tmp_path / "tail.onnx", "683", ["batch", 512], "Neg")
-        session = HailoSession(_contract(tmp_path, {"net/fc1": "683"}))
+        graph = HailoSession(_contract(tmp_path, {"net/fc1": "683"})).for_shape(Shape(3))
         frames = np.random.randint(0, 255, (3, 112, 112, 3), dtype=np.uint8)
         hailo.pipeline.infer.return_value = {"net/fc1": np.ones((3, 512), dtype=np.float32)}
 
-        (embedding,) = session.run(None, {"image": frames})
+        (embedding,) = graph.run(None, {"image": frames})
 
         fed = hailo.pipeline.infer.call_args.args[0]["net/input_layer1"]
         assert fed.dtype == np.uint8 and np.array_equal(fed, frames)
         assert np.array_equal(embedding, -np.ones((3, 512), dtype=np.float32))
-        assert session.normalizes_input
-        assert session.get_inputs()[0].name == "image"
-        assert [node.name for node in session.get_outputs()] == ["output"]
+        assert graph.normalizes_input
+        assert graph.get_inputs()[0].name == "image"
+        assert [node.name for node in graph.get_outputs()] == ["output"]
 
     def test_hands_the_tail_nchw_feature_maps(self, hailo: SimpleNamespace, tmp_path: Path) -> None:
         hailo.hef.get_output_vstream_infos.return_value = [SimpleNamespace(name="net/conv41", shape=(2, 3, 30))]
         _tail(tmp_path / "tail.onnx", "val_0", ["batch", 30, 2, 3], "Identity")
-        session = HailoSession(_contract(tmp_path, {"net/conv41": "val_0"}))
+        graph = HailoSession(_contract(tmp_path, {"net/conv41": "val_0"})).for_shape(Shape(1))
         nhwc = np.arange(2 * 3 * 30, dtype=np.float32).reshape(1, 2, 3, 30)
         hailo.pipeline.infer.return_value = {"net/conv41": nhwc}
 
-        (out,) = session.run(None, {"image": np.zeros((1, 112, 112, 3), dtype=np.uint8)})
+        (out,) = graph.run(None, {"image": np.zeros((1, 112, 112, 3), dtype=np.uint8)})
 
         assert np.array_equal(out, nhwc.transpose(0, 3, 1, 2))
+
+    def test_carries_the_model_metadata(self, hailo: SimpleNamespace, tmp_path: Path) -> None:
+        _tail(tmp_path / "tail.onnx", "683", ["batch", 512], "Identity")
+
+        session = HailoSession(_contract(tmp_path, {"net/fc1": "683"}, metadata={"character": "a\nb"}))
+
+        assert session.for_shape(Shape(1)).get_metadata() == {"character": "a\nb"}  # OCR's CTC charset
 
     def test_batches_a_multi_context_binary_on_the_device(self, hailo: SimpleNamespace, tmp_path: Path) -> None:
         _tail(tmp_path / "tail.onnx", "683", ["batch", 512], "Identity")
@@ -1113,10 +1129,10 @@ class TestHailoSession:
 
     def test_rejects_frames_the_binary_was_not_compiled_for(self, hailo: SimpleNamespace, tmp_path: Path) -> None:
         _tail(tmp_path / "tail.onnx", "683", ["batch", 512], "Identity")
-        session = HailoSession(_contract(tmp_path, {"net/fc1": "683"}))
+        graph = HailoSession(_contract(tmp_path, {"net/fc1": "683"})).for_shape(Shape(1))
 
         with pytest.raises(ValueError, match="takes uint8"):
-            session.run(None, {"image": np.zeros((1, 3, 112, 112), dtype=np.float32)})
+            graph.run(None, {"image": np.zeros((1, 3, 112, 112), dtype=np.float32)})
 
     def test_shapes_come_from_the_contract(self, hailo: SimpleNamespace, tmp_path: Path) -> None:
         _tail(tmp_path / "tail.onnx", "683", ["batch", 512], "Identity")
@@ -1124,6 +1140,36 @@ class TestHailoSession:
         session = HailoSession(_contract(tmp_path, {"net/fc1": "683"}, dims=[{"height": 640, "width": 640}]))
 
         assert session.shapes == (Shape(batch=1, height=640, width=640),)
+
+    def test_offers_every_shape_an_index_lists(self, hailo: SimpleNamespace, tmp_path: Path) -> None:
+        session = HailoSession(_graphs(tmp_path, [224, 320, 448]))
+
+        assert session.shapes == (Shape(1, width=224), Shape(1, width=320), Shape(1, width=448))
+        hailo.hpf.HEF.assert_not_called()  # nothing is configured until a request needs its shape
+
+    def test_routes_a_shape_to_the_graph_compiled_for_it(self, hailo: SimpleNamespace, tmp_path: Path) -> None:
+        session = HailoSession(_graphs(tmp_path, [224, 320]))
+
+        graph = session.for_shape(Shape(6, width=320))
+
+        assert hailo.hpf.HEF.call_args_list == [mock.call((tmp_path / "width320" / "model.hef").as_posix())]
+        assert session.for_shape(Shape(2, width=320)) is graph  # configured once, whatever the batch
+        assert session.for_shape(Shape(1, width=224)) is not graph
+
+    def test_rejects_a_shape_no_graph_was_compiled_for(self, hailo: SimpleNamespace, tmp_path: Path) -> None:
+        session = HailoSession(_graphs(tmp_path, [224, 320]))
+
+        with pytest.raises(ValueError, match="no graph compiled"):
+            session.for_shape(Shape(1, width=640))
+
+    def test_warms_every_graph(self, hailo: SimpleNamespace, tmp_path: Path) -> None:
+        session = HailoSession(_graphs(tmp_path, [224, 320]))
+        hailo.pipeline.infer.return_value = {"net/fc1": np.zeros((1, 512), dtype=np.float32)}
+
+        session.warm()
+
+        assert hailo.hpf.HEF.call_count == 2
+        assert hailo.pipeline.infer.call_count == 2
 
 
 class TestCLIP:

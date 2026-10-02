@@ -326,10 +326,14 @@ def graph_dir(root: Path, every: list[tuple[str, dict[str, int]]], variant: str,
         return root
     from immich_model.constants import dims_label
 
-    return root / (variant or "default") / (dims_label(dims) or "default")
+    # the layout the session reads: <variant>/model.json indexes a <variant>/<shape>/ per graph (no variant level
+    # for a model that has one set, as rknpu/<soc>/model.rknn has none)
+    return root / variant / (dims_label(dims) or "default")
 
 
-def prepare(source: Path, work: Path, dims: Mapping[str, int], end: list[str] | None) -> tuple[Path, dict[str, Any]]:
+def prepare(
+    source: Path, work: Path, dims: Mapping[str, int], end: list[str] | None, indexed: bool = False
+) -> tuple[Path, dict[str, Any]]:
     model = onnx.load(source.as_posix())  # pulls the safetensors sidecar into memory
     image = model.graph.input[0]
     named = image.type.tensor_type.shape.dim
@@ -363,6 +367,7 @@ def prepare(source: Path, work: Path, dims: Mapping[str, int], end: list[str] | 
         "source": source.as_posix(),
         "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
         "cut_onnx": path.name,
+        "indexed": indexed,  # one of several shapes: compiling it also lists it in the parent's model.json index
     }
     (work / "spec.json").write_text(json.dumps(spec, indent=2))
     print(f"prepared {path}: {json.dumps({k: v for k, v in spec.items() if k != 'metadata'})}")
@@ -453,7 +458,8 @@ def main() -> None:
     else:
         every = graphs(args.onnx)
         chosen = [(v, d) for v, d in every if args.variant is None or v == args.variant]
-        prepared = [prepare(args.onnx, graph_dir(args.out, every, v, d), d, args.end) for v, d in chosen]
+        indexed = len(every) > 1
+        prepared = [prepare(args.onnx, graph_dir(args.out, every, v, d), d, args.end, indexed) for v, d in chosen]
         if args.prepare_only:
             return
         if len(prepared) != 1:
@@ -515,6 +521,16 @@ def compile_graph(args: argparse.Namespace, cut: Path, spec: dict[str, Any]) -> 
         )
     )
     print(f"wrote {args.out / 'model.hef'}")
+    if spec.get("indexed"):
+        index_graph(args.out)
+
+
+def index_graph(graph: Path) -> None:
+    """List a compiled shape in its variant's model.json, the entry point the session routes shapes from."""
+    entry = graph.parent / "model.json"
+    graphs = set(json.loads(entry.read_text()).get("graphs", [])) if entry.exists() else set()
+    entry.write_text(json.dumps({"graphs": sorted(graphs | {graph.name})}, indent=2))
+    print(f"indexed {graph.name} in {entry}")
 
 
 if __name__ == "__main__":

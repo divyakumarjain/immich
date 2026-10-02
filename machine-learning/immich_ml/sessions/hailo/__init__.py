@@ -1,10 +1,11 @@
-"""Hailo-8/8L sessions. The .hef runs the model's body on the NPU; what the compiler left to the host (the ONNX past
-its cut, e.g. SCRFD's head flattening or ArcFace's L2 norm) runs on CPU from tail.onnx, so outputs reach the model
-classes named and shaped exactly as the ONNX would return them."""
+"""Hailo-8/8L sessions. Each compiled shape's .hef runs the model's body on the NPU; what the compiler left to the
+host (the ONNX past its cut, e.g. SCRFD's head flattening, ArcFace's L2 norm or OCR's CTC decode) runs on CPU from
+tail.onnx, so outputs reach the model classes named and shaped exactly as the ONNX would return them."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import asdict
 from functools import cache
 from pathlib import Path
 from threading import Lock
@@ -47,7 +48,9 @@ is_available = architecture is not None
 
 
 def model_path(model_dir: Path, variant: str = "") -> Path:
-    return model_dir / "hailo" / (architecture or "") / variant / "model.hef"
+    """The entry point of a model's Hailo build: a graph's contract, or an index of the graphs a model compiles one
+    of per shape (OCR: a canvas per aspect ratio, a recognizer per line width)."""
+    return model_dir / "hailo" / (architecture or "") / variant / "model.json"
 
 
 @cache
@@ -66,13 +69,18 @@ def _layout(value: NDArray[np.float32], rank: int) -> NDArray[np.float32]:
     return value.transpose(0, 3, 1, 2) if rank == 4 else value.reshape(len(value), -1)
 
 
-class HailoSession:
-    def __init__(self, model_path: Path) -> None:
+def _key(dims: Mapping[str, int | None]) -> tuple[int | None, int | None]:
+    return dims.get("height"), dims.get("width")
+
+
+class HailoGraph:
+    """One compiled shape: its .hef on the device, and the tail.onnx past its cut on the host."""
+
+    def __init__(self, graph_dir: Path) -> None:
         import hailo_platform as hpf
 
-        log.info(f"Loading Hailo model from {model_path}")
-        contract = orjson.loads(model_path.with_suffix(".json").read_bytes())
-        hef = hpf.HEF(model_path.as_posix())
+        contract = orjson.loads((graph_dir / "model.json").read_bytes())
+        hef = hpf.HEF((graph_dir / "model.hef").as_posix())
         # a binary too big to stay resident reloads its contexts every pass, which a device batch amortizes;
         # one that fits gains nothing from it, but still takes any number of frames in one call
         multi_context = hef.get_network_groups_infos()[0].is_multi_context
@@ -93,25 +101,15 @@ class HailoSession:
         self.compiled = HailoNode(compiled.name, tuple(compiled.shape))
         self.input = HailoNode(contract.get("input", "image"), (1, *self.compiled.shape))
         self.cut: dict[str, str] = contract.get("cut", {})  # binary output -> tail input
-        tail = model_path.parent / "tail.onnx"
+        tail = graph_dir / "tail.onnx"
         self.tail = ort.InferenceSession(tail.as_posix(), providers=["CPUExecutionProvider"]) if self.cut else None
         if self.tail is not None:
             self.ranks = {node.name: len(node.shape) for node in self.tail.get_inputs()}
             self.outputs: Sequence[SessionNode] = self.tail.get_outputs()
         else:
             self.outputs = [HailoNode(info.name, tuple(info.shape)) for info in hef.get_output_vstream_infos()]
-
-        self.shapes = tuple(Shape(1, **dims) for dims in contract.get("dims", [{}]))
-        # any count of frames is one call, so a run never splits into smaller ones than it has to
-        self.batches = tuple(range(settings.hailo_batch_size, 0, -1))
         self.metadata: dict[str, str] = contract.get("metadata", {})
-        log.info(f"Loaded Hailo model from {model_path} ({'multi' if multi_context else 'single'} context)")
-
-    def for_shape(self, shape: Shape) -> HailoSession:
-        return self
-
-    def warm(self) -> None:
-        self.run(None, {self.input.name: np.zeros(self.input.shape, dtype=np.uint8)})
+        log.info(f"Loaded Hailo graph {graph_dir} ({'multi' if multi_context else 'single'} context)")
 
     def get_inputs(self) -> Sequence[SessionNode]:
         return [self.input]
@@ -152,4 +150,50 @@ class HailoSession:
             pipeline.__exit__(None, None, None)
 
 
-__all__ = ["HailoSession", "HailoNode", "architecture", "is_available", "model_path"]
+class HailoSession:
+    """The graphs a model was compiled into, routed by shape. A graph is configured on the device the first time a
+    request needs its shape: a Hailo-8 holds dozens configured at once, but most libraries never send OCR's
+    tallest canvases or longest lines, and each configured graph costs host memory and load time."""
+
+    def __init__(self, model_path: Path) -> None:
+        log.info(f"Loading Hailo model from {model_path}")
+        entry = orjson.loads(model_path.read_bytes())
+        dirs = [model_path.parent / name for name in entry["graphs"]] if "graphs" in entry else [model_path.parent]
+        self.routes: dict[tuple[int | None, int | None], Path] = {}
+        shapes: list[Shape] = []
+        for graph_dir in dirs:
+            contract = (
+                entry if graph_dir == model_path.parent else orjson.loads((graph_dir / "model.json").read_bytes())
+            )
+            for dims in contract.get("dims", [{}]):
+                shapes.append(Shape(1, **dims))
+                self.routes[_key(dims)] = graph_dir
+        self.shapes = tuple(shapes)
+        # any count of frames is one call, so a run never splits into smaller ones than it has to
+        self.batches = tuple(range(settings.hailo_batch_size, 0, -1))
+        self.graphs: dict[Path, HailoGraph] = {}
+        self.lock = Lock()
+        if len(dirs) == 1:
+            self._graph(dirs[0])  # the one graph there is, so nothing waits on a shape
+
+    def _graph(self, graph_dir: Path) -> HailoGraph:
+        with self.lock:  # two requests may need a graph neither has configured
+            if (graph := self.graphs.get(graph_dir)) is None:
+                graph = self.graphs[graph_dir] = HailoGraph(graph_dir)
+            return graph
+
+    def for_shape(self, shape: Shape) -> HailoGraph:
+        graph_dir = self.routes.get(_key(asdict(shape)))
+        if graph_dir is None:
+            if len(set(self.routes.values())) != 1:
+                raise ValueError(f"no graph compiled for {shape}; compiled for {list(self.shapes)}")
+            graph_dir = next(iter(self.routes.values()))
+        return self._graph(graph_dir)
+
+    def warm(self) -> None:
+        for shape in self.shapes:
+            graph = self.for_shape(shape)
+            graph.run(None, {graph.input.name: np.zeros(graph.input.shape, dtype=np.uint8)})
+
+
+__all__ = ["HailoGraph", "HailoNode", "HailoSession", "architecture", "is_available", "model_path"]
