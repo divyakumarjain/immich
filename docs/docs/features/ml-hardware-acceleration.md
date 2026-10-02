@@ -24,7 +24,7 @@ You do not need to redo any machine learning jobs after enabling hardware accele
 - Only Linux and Windows (through WSL2) servers are supported.
 - ARM NN is only supported on devices with Mali GPUs. Other Arm devices are not supported.
 - Some models may not be compatible with certain backends. CUDA is the most reliable.
-- Hailo only runs models that have a Hailo build. Any other model, and the CLIP text encoder (smart search queries), runs on the CPU instead. Hailo builds are not yet published for any model.
+- Hailo only runs models that have a Hailo build: facial recognition and the smart search image encoder. Any other model, the CLIP text encoder (smart search queries) and OCR run on the CPU instead, as OCR models lose too much accuracy when quantized for the Hailo-8. Hailo builds are not yet published for any model.
 - Search latency isn't improved by ARM NN due to model compatibility issues preventing its use. However, smart search jobs do make use of ARM NN.
 
 ## Prerequisites
