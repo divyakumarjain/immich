@@ -1,12 +1,16 @@
-"""Build the Dataflow Compiler's calibration sets for the face models from LFW, through Immich's own pipeline.
+"""Build the Dataflow Compiler's calibration sets through Immich's own preprocessing.
 
-Both sets are raw uint8 NHWC pixels: the HEFs fold normalization in, so this is exactly what they will be fed.
+Every set is raw uint8 NHWC pixels: the HEFs fold normalization in, so this is exactly what they will be fed.
 
-rec_calib.npy  (N, 112, 112, 3)  faces found by the ONNX detector and aligned by `align_face`, one person each
-det_calib.npy  (N, 640, 640, 3)  LFW is one centered close-up per photo, so a third are single photos and the rest
-                                 2x2 / 4x4 mosaics, to also calibrate the small faces of a group shot
+faces (from LFW)
+  rec_calib.npy   (N, 112, 112, 3)  faces found by the ONNX detector and aligned by `align_face`, one person each
+  det_calib.npy   (N, 640, 640, 3)  LFW is one centered close-up per photo, so a third are single photos and the
+                                    rest 2x2 / 4x4 mosaics, to also calibrate the small faces of a group shot
+clip (from any photo collection, e.g. COCO val2017)
+  clip_calib.npy  (N, S, S, 3)      resized as OpenClipVisualEncoder does, from the model's preprocess_cfg.json
 
-    python make_calib.py --lfw datasets/lfw --det-onnx det.onnx --out calib/buffalo_l
+    python make_calib.py faces --lfw datasets/lfw --det-onnx det.onnx --out calib/buffalo_l
+    python make_calib.py clip --images datasets/val2017 --model-dir ViT-B-16-SigLIP__webli/visual --out calib/siglip
 """
 
 from __future__ import annotations
@@ -22,7 +26,9 @@ import cv2
 import numpy as np
 from compare import DET_SIZE, OnnxModel, crops, detect, letterbox
 from numpy.typing import NDArray
-from PIL import Image
+from PIL import Image, ImageOps
+
+from immich_ml.models.transforms import crop_pil, get_pil_resampling, resize_pil
 
 
 def lfw_by_person(root: Path) -> dict[str, list[Path]]:
@@ -86,19 +92,62 @@ def save(out: Path, name: str, array: NDArray[np.uint8]) -> dict[str, object]:
     return {"file": path.name, "shape": list(array.shape), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
+def clip_resize(image: Image.Image, cfg: dict[str, Any]) -> NDArray[np.uint8]:
+    """`OpenClipVisualEncoder._resize`, from the same preprocess_cfg.json the encoder loads."""
+    size = cfg["size"][0] if isinstance(cfg["size"], list) else cfg["size"]
+    resample = get_pil_resampling(cfg["interpolation"])
+    match cfg.get("resize_mode", "shortest"):
+        case "squash":
+            image = image.resize((size, size), resample=resample)
+        case "shortest":
+            image = crop_pil(resize_pil(image, size, resample), size)
+        case mode:
+            raise SystemExit(f"unsupported resize_mode {mode!r}")
+    return np.asarray(image.convert("RGB"), dtype=np.uint8)
+
+
+def run_clip(args: argparse.Namespace) -> None:
+    cfg = json.loads((args.model_dir / "preprocess_cfg.json").read_text())
+    paths = sorted(p for p in args.images.rglob("*") if p.suffix.lower() in {".jpg", ".jpeg", ".png"})
+    chosen = random.Random(args.seed).sample(paths, min(args.count, len(paths)))
+    frames = np.stack([clip_resize(ImageOps.exif_transpose(Image.open(p)), cfg) for p in chosen])
+    args.out.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "source": f"{args.images} (calibration only, not redistributed)",
+        "seed": args.seed,
+        "preprocess_cfg": cfg,
+        "sets": {"clip": save(args.out, "clip_calib", frames)},
+        "images": [p.as_posix() for p in chosen],
+    }
+    (args.out / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    print(json.dumps(manifest["sets"], indent=2))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--lfw", type=Path, required=True)
-    parser.add_argument(
-        "--det-onnx", type=Path, required=True, help="Immich's detector, which finds the faces to align"
-    )
-    parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--rec-count", type=int, default=1024)
-    parser.add_argument("--det-count", type=int, default=512)
-    parser.add_argument("--min-score", type=float, default=0.7)
-    parser.add_argument("--seed", type=int, default=0)
+    commands = parser.add_subparsers(dest="command", required=True)
+    faces = commands.add_parser("faces")
+    faces.add_argument("--lfw", type=Path, required=True)
+    faces.add_argument("--det-onnx", type=Path, required=True, help="Immich's detector, which finds the faces to align")
+    faces.add_argument("--out", type=Path, required=True)
+    faces.add_argument("--rec-count", type=int, default=1024)
+    faces.add_argument("--det-count", type=int, default=512)
+    faces.add_argument("--min-score", type=float, default=0.7)
+    faces.add_argument("--seed", type=int, default=0)
+    clip = commands.add_parser("clip")
+    clip.add_argument("--images", type=Path, required=True)
+    clip.add_argument("--model-dir", type=Path, required=True, help="the visual submodel, with its preprocess_cfg.json")
+    clip.add_argument("--out", type=Path, required=True)
+    clip.add_argument("--count", type=int, default=1024)
+    clip.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
+    if args.command == "clip":
+        run_clip(args)
+    else:
+        run_faces(args)
 
+
+def run_faces(args: argparse.Namespace) -> None:
     rng = random.Random(args.seed)
     people = lfw_by_person(args.lfw)
     # one photo per person first, for as many identities as the set can hold

@@ -204,6 +204,8 @@ def run_tensor(args: argparse.Namespace) -> dict[str, Any]:
     for name, image in load_images(args.images, args.limit):
         if args.resize == "letterbox":
             pixels, _ = letterbox(image, height)
+        elif args.resize == "squash":
+            pixels = np.asarray(image.resize((width, height), resample=Image.Resampling.BICUBIC))
         else:
             pixels = np.asarray(crop_pil(resize_pil(image, height), height))
         assert pixels.shape[:2] == (height, width), f"HEF takes {height}x{width}, {args.resize} made {pixels.shape}"
@@ -449,7 +451,10 @@ def main() -> None:
     tensor.add_argument("--mean", type=float, default=127.5, help="in pixel units, for a float-input ONNX or HEF")
     tensor.add_argument("--std", type=float, default=127.5, help="in pixel units, for a float-input ONNX or HEF")
     tensor.add_argument(
-        "--resize", choices=("crop", "letterbox"), default="crop", help="crop is CLIP's, letterbox SCRFD's"
+        "--resize",
+        choices=("crop", "squash", "letterbox"),
+        default="crop",
+        help="a CLIP model's preprocess_cfg.json resize_mode (shortest = crop; SigLIP squashes), or SCRFD's letterbox",
     )
 
     face = commands.add_parser("face", parents=[common])
