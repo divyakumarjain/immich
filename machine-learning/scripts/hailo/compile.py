@@ -331,8 +331,33 @@ def graph_dir(root: Path, every: list[tuple[str, dict[str, int]]], variant: str,
     return root / variant / (dims_label(dims) or "default")
 
 
+def cut_after_softmax(body: onnx.ModelProto, tail: onnx.ModelProto, end: list[str]) -> list[str]:
+    """Move each cut past a softmax over its last axis, the host taking the log back. For logits decoded by their
+    argmax (OCR's CTC), log(softmax(x)) is x less a per-position constant, so the tail's argmax and confidence
+    (1 / sum(exp(x - max x)), i.e. the softmax maximum) are unchanged; but the binary emits, and fine-tunes against,
+    probabilities, whose peaks quantize well, rather than 18385 logits dominated by the classes that never win
+    (an 8-bit-tolerant layout Hailo's own PP-OCR build also uses)."""
+    probabilities = []
+    for name in end:
+        p = f"{name}_softmax"
+        body.graph.node.append(onnx.helper.make_node("Softmax", [name], [p], name=f"{name}_cut_softmax", axis=-1))
+        next(output for output in body.graph.output if output.name == name).name = p
+        next(value for value in tail.graph.input if value.name == name).name = p
+        eps = f"{name}_eps"
+        tail.graph.initializer.append(numpy_helper.from_array(np.array(1e-12, dtype=np.float32), eps))
+        tail.graph.node.insert(0, onnx.helper.make_node("Log", [f"{p}_plus_eps"], [name], name=f"{name}_log"))
+        tail.graph.node.insert(0, onnx.helper.make_node("Add", [p, eps], [f"{p}_plus_eps"], name=f"{name}_eps_add"))
+        probabilities.append(p)
+    return probabilities
+
+
 def prepare(
-    source: Path, work: Path, dims: Mapping[str, int], end: list[str] | None, indexed: bool = False
+    source: Path,
+    work: Path,
+    dims: Mapping[str, int],
+    end: list[str] | None,
+    indexed: bool = False,
+    softmax: bool = False,
 ) -> tuple[Path, dict[str, Any]]:
     model = onnx.load(source.as_posix())  # pulls the safetensors sidecar into memory
     image = model.graph.input[0]
@@ -342,6 +367,10 @@ def prepare(
     start, mean, std = preprocess(model)
     end = end or host_cut(model)
     body = onnx.utils.Extractor(model).extract_model([start], end)
+    # what the session replays on the host past the cut, from the cut tensors to the graph's own outputs
+    tail = onnx.utils.Extractor(model).extract_model(end, [output.name for output in model.graph.output])
+    if softmax:
+        end = cut_after_softmax(body, tail, end)
     # pin the start tensor to one NCHW frame; the DFC wants static shapes
     for dim, value in zip(body.graph.input[0].type.tensor_type.shape.dim, (1, frame[3], frame[1], frame[2])):
         dim.Clear()
@@ -352,8 +381,6 @@ def prepare(
     work.mkdir(parents=True, exist_ok=True)
     path = work / f"{source.parent.name}.cut.onnx"
     onnx.save(body, path.as_posix())  # weights inline: one self-contained file for the parser
-    # what the session replays on the host past the cut, from the cut tensors to the graph's own outputs
-    tail = onnx.utils.Extractor(model).extract_model(end, [output.name for output in model.graph.output])
     onnx.save(tail, (work / "tail.onnx").as_posix())
     spec = {
         "start": start,
@@ -462,6 +489,11 @@ def main() -> None:
     parser.add_argument("--calib", type=Path, help="(N, H, W, 3) uint8 from make_calib.py, sized for the graph")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--end", nargs="*", help="cut tensors; by default where the host tail begins")
+    parser.add_argument(
+        "--softmax-cut",
+        action="store_true",
+        help="end on softmax(cut), the host taking the log (argmax-decoded logits)",
+    )
     parser.add_argument("--variant", help="prepare only this variant (e.g. res736)")
     parser.add_argument("--arch", default="hailo8", choices=("hailo8", "hailo8l", "hailo8r"))
     parser.add_argument("--opt-level", type=int, default=2, help="2+ fine-tunes on GPU; 0-1 run on CPU")
@@ -481,7 +513,10 @@ def main() -> None:
         every = graphs(args.onnx)
         chosen = [(v, d) for v, d in every if args.variant is None or v == args.variant]
         indexed = len(every) > 1
-        prepared = [prepare(args.onnx, graph_dir(args.out, every, v, d), d, args.end, indexed) for v, d in chosen]
+        prepared = [
+            prepare(args.onnx, graph_dir(args.out, every, v, d), d, args.end, indexed, args.softmax_cut)
+            for v, d in chosen
+        ]
         if args.prepare_only:
             return
         if len(prepared) != 1:
