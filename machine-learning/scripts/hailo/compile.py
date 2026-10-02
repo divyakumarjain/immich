@@ -388,18 +388,22 @@ def alls(spec: dict[str, Any], args: argparse.Namespace, calib_size: int) -> str
     return "\n".join(lines) + "\n"
 
 
-def output_map(hef_path: Path, cut: Path) -> dict[str, str]:
-    """HEF output vstream -> the cut tensor it carries, from the parser's record of the nodes behind each output."""
-    import hailo_platform as hpf
-
-    hef = hpf.HEF(hef_path.as_posix())
+def output_map(runner: Any, cut: Path) -> dict[str, str]:
+    """HEF output vstream -> the cut tensor it carries, from the parser's record (in the compiled HN) of the nodes
+    behind each output layer. The same names HailoRT reports from the .hef, without needing its C library here."""
+    hn = runner.get_hn_dict()
+    layers = hn["layers"]
     produces = {node.name: node.output[0] for node in onnx.load(cut.as_posix(), load_external_data=False).graph.node}
     mapping = {}
-    for info in hef.get_output_vstream_infos():
-        found = [produces[name] for name in hef.get_original_names_from_vstream_name(info.name) if name in produces]
+    for layer in layers.values():
+        if layer["type"] != "output_layer":
+            continue
+        (source,) = layer["input"]
+        vstream = source if "/" in source else f"{hn['name']}/{source}"
+        found = [produces[name] for name in layers[source].get("original_names", []) if name in produces]
         if not found:
-            raise RuntimeError(f"{info.name} names no node of {cut.name}")
-        mapping[info.name] = found[-1]
+            raise RuntimeError(f"{vstream} names no node of {cut.name}")
+        mapping[vstream] = found[-1]
     return mapping
 
 
@@ -502,7 +506,7 @@ def compile_graph(args: argparse.Namespace, cut: Path, spec: dict[str, Any]) -> 
             {
                 "dims": spec["dims"],
                 "input": spec["input"],
-                "cut": output_map(args.out / "model.hef", cut),
+                "cut": output_map(runner, cut),
                 "metadata": spec.get("metadata", {}),
                 "build": {
                     "source": spec["source"],
