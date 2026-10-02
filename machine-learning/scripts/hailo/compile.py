@@ -427,9 +427,13 @@ def emulator_check(runner: Any, cut: Path, holdout: NDArray[np.uint8], spec: dic
         emulated = emulated if isinstance(emulated, list) else [emulated]
         rows = {}
         for name, ref in zip(spec["end"], reference):
-            # outputs come back NHWC (or flat); pair each ONNX tensor with the one of matching size and channels
-            nhwc = ref.transpose(0, 2, 3, 1) if ref.ndim == 4 else ref.reshape(len(ref), -1)
-            match = next(e for e in emulated if e.size == nhwc.size and e.shape[-1] == nhwc.shape[-1])
+            # outputs come back NHWC, or as (N, 1, L, C) for a sequence: pair each ONNX tensor with the output of its
+            # size, its own last axis (channels, classes) breaking a tie
+            nhwc = ref.transpose(0, 2, 3, 1) if ref.ndim == 4 else ref
+            sized = [e for e in emulated if e.size == nhwc.size]
+            match = next((e for e in sized if e.shape[-1] == nhwc.shape[-1]), sized[0] if sized else None)
+            if match is None:
+                raise RuntimeError(f"no emulator output of {nhwc.size} elements for {name}")
             a, b = nhwc.reshape(len(nhwc), -1).astype(np.float64), match.reshape(len(match), -1).astype(np.float64)
             cos = (a * b).sum(1) / (np.linalg.norm(a, axis=1) * np.linalg.norm(b, axis=1) + 1e-12)
             rows[name] = {"cos_mean": float(cos.mean()), "cos_min": float(cos.min())}
@@ -492,7 +496,11 @@ def compile_graph(args: argparse.Namespace, cut: Path, spec: dict[str, Any]) -> 
     runner.translate_onnx_model(cut.as_posix(), name)
     runner.load_model_script(script)
     runner.optimize(calib.astype(np.float32))
-    check = emulator_check(runner, cut, holdout, spec)
+    try:  # a report, not a gate: a fault in it must not throw away the optimization it reports on
+        check = emulator_check(runner, cut, holdout, spec)
+    except Exception as e:
+        print(f"emulator check failed: {e!r}")
+        check = {"error": repr(e)}
     runner.save_har((args.out / "model.har").as_posix())
     hef = runner.compile()
     (args.out / "model.hef").write_bytes(hef)
