@@ -377,7 +377,8 @@ def prepare(
 def alls(spec: dict[str, Any], args: argparse.Namespace, calib_size: int) -> str:
     identity = all(m == 0 for m in spec["mean"]) and all(s == 1 for s in spec["std"])
     lines = [
-        *([] if identity else [f"normalization1 = normalization({spec['mean']}, {spec['std']})"]),
+        # a name no parsed layer takes: the parser already calls batch norms normalization1..N (PP-OCR has them)
+        *([] if identity else [f"input_normalization = normalization({spec['mean']}, {spec['std']})"]),
         f"model_optimization_config(calibration, batch_size={args.calib_batch}, calibset_size={calib_size})",
         f"model_optimization_flavor(optimization_level={args.opt_level}, compression_level=0)",
         # an exhaustive search for the fastest placement: worth it for a release binary, but it can take hours
