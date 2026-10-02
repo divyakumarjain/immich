@@ -441,6 +441,15 @@ def emulator_check(runner: Any, cut: Path, holdout: NDArray[np.uint8], spec: dic
             a, b = nhwc.reshape(len(nhwc), -1).astype(np.float64), match.reshape(len(match), -1).astype(np.float64)
             cos = (a * b).sum(1) / (np.linalg.norm(a, axis=1) * np.linalg.norm(b, axis=1) + 1e-12)
             rows[name] = {"cos_mean": float(cos.mean()), "cos_min": float(cos.min())}
+            if ref.ndim == 3:
+                # a per-position class sequence (OCR logits) is decoded by its argmax, which cosine can hide: an
+                # 8-bit classifier kept cosine 0.976 while flattening the character peaks under blank
+                top_ref, top = ref.argmax(-1), match.reshape(ref.shape).argmax(-1)
+                kept = top_ref != 0  # positions ONNX reads as a character rather than CTC blank
+                rows[name]["argmax_agree"] = float((top_ref == top).mean())
+                rows[name]["argmax_agree_characters"] = (
+                    float((top_ref[kept] == top[kept]).mean()) if kept.any() else 1.0
+                )
         results[context] = rows
         print(context, json.dumps(rows))
     return results
