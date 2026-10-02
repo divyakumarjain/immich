@@ -109,7 +109,9 @@ def alls(spec: dict[str, Any], args: argparse.Namespace, calib_size: int) -> str
         f"normalization1 = normalization({spec['mean']}, {spec['std']})",
         f"model_optimization_config(calibration, batch_size={args.calib_batch}, calibset_size={calib_size})",
         f"model_optimization_flavor(optimization_level={args.opt_level}, compression_level=0)",
-        "performance_param(compiler_optimization_level=max)",
+        # an exhaustive search for the fastest placement: worth it for a release binary, but it can take hours
+        # on a multi-context model, so a build that only has to prove the pipeline leaves it at the default
+        *(["performance_param(compiler_optimization_level=max)"] if args.max_performance else []),
         *args.alls,
     ]
     return "\n".join(lines) + "\n"
@@ -174,6 +176,7 @@ def main() -> None:
     parser.add_argument("--calib-batch", type=int, default=8)
     parser.add_argument("--holdout", type=int, default=64, help="calibration frames kept out for the emulator check")
     parser.add_argument("--alls", nargs="*", default=[], help="extra model-script lines, e.g. 16-bit outputs")
+    parser.add_argument("--max-performance", action="store_true", help="search exhaustively for the fastest layout")
     parser.add_argument("--prepare-only", action="store_true")
     args = parser.parse_args()
 
