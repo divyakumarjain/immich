@@ -400,6 +400,10 @@ def output_map(runner: Any, cut: Path) -> dict[str, str]:
         if layer["type"] != "output_layer":
             continue
         (source,) = layer["input"]
+        # past layers the model script added (a format_conversion folding a sequence), which no ONNX node made:
+        # HailoRT names the output after the compute layer they reshape, as it does Hailo's own PP-OCR
+        while not layers[source].get("original_names") and len(layers[source].get("input", [])) == 1:
+            (source,) = layers[source]["input"]
         vstream = source if "/" in source else f"{hn['name']}/{source}"
         found = [produces[name] for name in layers[source].get("original_names", []) if name in produces]
         if not found:

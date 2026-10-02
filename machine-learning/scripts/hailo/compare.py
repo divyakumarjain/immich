@@ -84,8 +84,14 @@ class HostTail:
         feeds = {}
         for output, tensor in self.cut.items():
             value = compiled[output]
-            # HailoRT hands back NHWC; the graph's tensors are NCHW, or flat rows past a Gemm
-            feeds[tensor] = value.transpose(0, 3, 1, 2) if self.rank[tensor] == 4 else value.reshape(len(value), -1)
+            # HailoRT hands back NHWC; the graph's tensors are NCHW, (L, C) sequences, or flat rows past a Gemm
+            rank = self.rank[tensor]
+            if rank == 4:
+                feeds[tensor] = value.transpose(0, 3, 1, 2)
+            elif rank == 3:
+                feeds[tensor] = value.reshape(len(value), -1, value.shape[-1])
+            else:
+                feeds[tensor] = value.reshape(len(value), -1)
         return dict(zip(self.outputs, (widen(o) for o in self.session.run(None, feeds))))
 
 

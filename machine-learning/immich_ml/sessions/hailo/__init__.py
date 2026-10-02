@@ -65,8 +65,13 @@ def _vdevice() -> Any:
 
 
 def _layout(value: NDArray[np.float32], rank: int) -> NDArray[np.float32]:
-    """HailoRT returns NHWC feature maps and flat vectors; the tail reads NCHW, or rows past a Gemm."""
-    return value.transpose(0, 3, 1, 2) if rank == 4 else value.reshape(len(value), -1)
+    """HailoRT returns NHWC feature maps, (1, L, C) sequences and flat vectors; the tail reads NCHW, (L, C)
+    sequences (OCR's per-position logits), or rows past a Gemm."""
+    if rank == 4:
+        return value.transpose(0, 3, 1, 2)
+    if rank == 3:
+        return value.reshape(len(value), -1, value.shape[-1])
+    return value.reshape(len(value), -1)
 
 
 def _key(dims: Mapping[str, int | None]) -> tuple[int | None, int | None]:

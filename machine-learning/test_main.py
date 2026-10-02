@@ -1103,6 +1103,18 @@ class TestHailoSession:
 
         assert np.array_equal(out, nhwc.transpose(0, 3, 1, 2))
 
+    def test_hands_the_tail_per_position_sequences(self, hailo: SimpleNamespace, tmp_path: Path) -> None:
+        # OCR's logits: HailoRT returns (N, 1, L, classes), the CTC tail reads (N, L, classes)
+        hailo.hef.get_output_vstream_infos.return_value = [SimpleNamespace(name="net/conv29", shape=(1, 5, 30))]
+        _tail(tmp_path / "tail.onnx", "Add.223", ["batch", "seq", 30], "Identity")
+        graph = HailoSession(_contract(tmp_path, {"net/conv29": "Add.223"})).for_shape(Shape(2))
+        logits = np.arange(2 * 5 * 30, dtype=np.float32).reshape(2, 1, 5, 30)
+        hailo.pipeline.infer.return_value = {"net/conv29": logits}
+
+        (out,) = graph.run(None, {"image": np.zeros((2, 112, 112, 3), dtype=np.uint8)})
+
+        assert np.array_equal(out, logits.reshape(2, 5, 30))
+
     def test_carries_the_model_metadata(self, hailo: SimpleNamespace, tmp_path: Path) -> None:
         _tail(tmp_path / "tail.onnx", "683", ["batch", 512], "Identity")
 
