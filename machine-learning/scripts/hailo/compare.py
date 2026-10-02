@@ -3,9 +3,13 @@
 tensor: feed one preprocessed image to both and compare every output head (compile fidelity, any model)
 face:   run Immich's own face pipeline (letterbox -> SCRFD decode -> NMS -> align -> ArcFace) on both and compare
         what Immich would store (task fidelity); any HEF left out runs on ONNX, so each stage can be isolated
+pairs:  face verification on LFW pairs, as Immich clusters (cosine distance under maxDistance): ONNX, HEF, and a
+        library mixing the two, plus how often their verdicts agree; every face is embedded by both from one crop
 
     python compare.py tensor --onnx visual/model.onnx --hef siglip.hef --images images/ --mean 127.5 --std 127.5
     python compare.py face --det-onnx det.onnx --rec-onnx rec.onnx --det-hef det.hef --rec-hef rec.hef --images images/
+    python compare.py pairs --det-onnx det.onnx --rec-onnx rec.onnx --rec-hef rec.hef --images datasets/lfw \
+        --exclude calib/buffalo_l/manifest.json
 """
 
 from __future__ import annotations
@@ -409,6 +413,126 @@ def run_face(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+# ── pairs ─────────────────────────────────────────────────────────────
+
+
+def lfw_pairs(
+    root: Path, count: int, exclude: set[str], seed: int
+) -> tuple[list[tuple[Path, Path]], list[tuple[Path, Path]]]:
+    """`count` same-person and `count` different-person pairs, none using an image calibration saw."""
+    import random
+
+    rng = random.Random(seed)
+    people: dict[str, list[Path]] = {}
+    for path in sorted(root.rglob("*.jpg")):
+        if path.name not in exclude:
+            people.setdefault(path.parent.name, []).append(path)
+    names = sorted(people)
+    several = [name for name in names if len(people[name]) >= 2]
+    same: set[tuple[Path, Path]] = set()
+    while len(same) < count:
+        a, b = rng.sample(people[rng.choice(several)], 2)
+        same.add((min(a, b), max(a, b)))
+    different: set[tuple[Path, Path]] = set()
+    while len(different) < count:
+        x, y = rng.sample(names, 2)
+        a, b = rng.choice(people[x]), rng.choice(people[y])
+        different.add((min(a, b), max(a, b)))
+    return sorted(same), sorted(different)
+
+
+def verdicts(distances: NDArray[np.float64], same: NDArray[np.bool_], threshold: float) -> dict[str, float]:
+    predicted = distances < threshold
+    best = max(((float(((distances < t) == same).mean()), float(t)) for t in np.linspace(0.05, 1.5, 291)))
+    return {
+        "accuracy": float((predicted == same).mean()),
+        "true_accept": float(predicted[same].mean()),  # same person grouped together
+        "false_accept": float(predicted[~same].mean()),  # different people merged
+        "best_accuracy": best[0],
+        "best_threshold": best[1],
+    }
+
+
+def run_pairs(args: argparse.Namespace) -> dict[str, Any]:
+    exclude = set()
+    if args.exclude:  # the calibration manifest: its faces would flatter a quantized model
+        manifest = json.loads(args.exclude.read_text())
+        exclude = {Path(path).name for path in manifest.get("rec_images", [])}
+    same_pairs, different_pairs = lfw_pairs(args.images, args.pairs, exclude, args.seed)
+    pairs = same_pairs + different_pairs
+    labels = np.array([True] * len(same_pairs) + [False] * len(different_pairs))
+    paths = sorted({path for pair in pairs for path in pair})
+    print(f"{len(same_pairs)} same + {len(different_pairs)} different pairs over {len(paths)} images")
+
+    forced = dict(item.split("=", 1) for item in args.output_map)
+    det = FaceStage(
+        OnnxModel(args.det_onnx, 127.5, 128.0),
+        HefModel(args.det_hef) if args.det_hef else None,
+        args.hef_normalized,
+        forced,
+    )
+    rec = FaceStage(
+        OnnxModel(args.rec_onnx, 127.5, 127.5),
+        HefModel(args.rec_hef, batch_size=args.hef_batch),
+        args.hef_normalized,
+        forced,
+    )
+    found: dict[Path, NDArray[np.uint8]] = {}
+    for path in paths:  # the face LFW centers on, aligned once, so both backends embed the very same crop
+        image = decode_pil(ImageOps.exif_transpose(Image.open(path)))
+        canvas, scale = letterbox(image, DET_SIZE)
+        heads = det.run_hef(canvas[None]) if det.hef else det.run_onnx(canvas[None])
+        faces = detect(heads, scale, args.min_score)
+        if len(faces["boxes"]) == 0:
+            continue
+        centers = (faces["boxes"][:, :2] + faces["boxes"][:, 2:]) / 2
+        subject = int(np.argmin(np.linalg.norm(centers - np.array(image.size) / 2, axis=1)))
+        found[path] = crops(np.asarray(image), faces["landmarks"][subject : subject + 1])[0]
+
+    order = list(found)
+    stack = np.stack([found[path] for path in order])
+    ms: dict[str, list[float]] = {"onnx": [], "hef": []}
+    onnx_emb = np.concatenate(
+        [embed(lambda x: timed(lambda: rec.run_onnx(x), ms["onnx"]), stack[i : i + 8]) for i in range(0, len(stack), 8)]
+    )
+    hef_emb = np.concatenate(
+        [embed(lambda x: timed(lambda: rec.run_hef(x), ms["hef"]), stack[i : i + 8]) for i in range(0, len(stack), 8)]
+    )
+    index = {path: i for i, path in enumerate(order)}
+    kept = [k for k, (a, b) in enumerate(pairs) if a in index and b in index]
+    a = np.array([index[pairs[k][0]] for k in kept])
+    b = np.array([index[pairs[k][1]] for k in kept])
+    same = labels[kept]
+
+    def distance(x: NDArray[np.float32], y: NDArray[np.float32]) -> NDArray[np.float64]:
+        return 1 - np.sum(x.astype(np.float64) * y, axis=1)
+
+    d_onnx, d_hef = distance(onnx_emb[a], onnx_emb[b]), distance(hef_emb[a], hef_emb[b])
+    # a library that switched backends: faces embedded before against faces embedded after, both orders
+    d_mixed = np.concatenate([distance(onnx_emb[a], hef_emb[b]), distance(hef_emb[a], onnx_emb[b])])
+    t = args.max_distance
+    summary = {
+        "pairs": {"same": int(same.sum()), "different": int((~same).sum()), "faces": len(order)},
+        "same_face_cosine": stats(cosine_rows(onnx_emb, hef_emb).tolist()),
+        "onnx": verdicts(d_onnx, same, t),
+        "hef": verdicts(d_hef, same, t),
+        "mixed": verdicts(d_mixed, np.concatenate([same, same]), t),
+        "verdict_agreement": float(((d_onnx < t) == (d_hef < t)).mean()),
+        "distance_shift": stats(np.abs(d_onnx - d_hef).tolist()),
+    }
+    for stage in (det, rec):
+        if stage.hef:
+            stage.hef.close()
+    return {
+        "task": "pairs",
+        "hef": {"det": det.hef.describe() if det.hef else None, "rec": rec.hef.describe() if rec.hef else None},
+        "onnx": {"det": args.det_onnx.as_posix(), "rec": args.rec_onnx.as_posix()},
+        "max_distance": t,
+        "summary": summary,
+        "latency": {key: latency(values) for key, values in ms.items()},
+    }
+
+
 # ── cli ───────────────────────────────────────────────────────────────
 
 
@@ -465,8 +589,21 @@ def main() -> None:
     face.add_argument("--min-score", type=float, default=0.7, help="Immich's default minScore")
     face.add_argument("--max-distance", type=float, default=0.5, help="Immich's default maxDistance")
 
+    pairs = commands.add_parser("pairs", parents=[common], help="--images is the LFW root")
+    pairs.add_argument("--det-onnx", type=Path, required=True)
+    pairs.add_argument("--rec-onnx", type=Path, required=True)
+    pairs.add_argument("--rec-hef", type=Path, required=True)
+    pairs.add_argument("--det-hef", type=Path, help="detect on Hailo too: faster, and both backends share each crop")
+    pairs.add_argument("--exclude", type=Path, help="make_calib.py's manifest; its images stay out of the pairs")
+    pairs.add_argument("--pairs", type=int, default=1000, help="pairs of each kind")
+    pairs.add_argument("--hef-batch", type=int, default=8, help="device batch for a multi-context binary")
+    pairs.add_argument("--min-score", type=float, default=0.7)
+    pairs.add_argument("--max-distance", type=float, default=0.5, help="Immich's default maxDistance")
+    pairs.add_argument("--seed", type=int, default=0)
+
     args = parser.parse_args()
-    report(run_tensor(args) if args.command == "tensor" else run_face(args), args.results)
+    run = {"tensor": run_tensor, "face": run_face, "pairs": run_pairs}[args.command]
+    report(run(args), args.results)
 
 
 if __name__ == "__main__":
