@@ -1,6 +1,6 @@
 # Hardware-Accelerated Machine Learning
 
-import ComposeBuilder from '/docs/partials/_compose-builder.mdx';
+import ComposeBuilder from '/docs/partials/\_compose-builder.mdx';
 
 This feature allows you to use a GPU to accelerate machine learning tasks, such as Smart Search and Facial Recognition, while reducing CPU load.
 As this is a new feature, it is still experimental and may not work on all systems.
@@ -12,6 +12,7 @@ You do not need to redo any machine learning jobs after enabling hardware accele
 ## Supported Backends
 
 - ARM NN (Mali)
+- Hailo (Hailo-8 and Hailo-8L, e.g. the Raspberry Pi AI HAT+)
 - CUDA (NVIDIA GPUs with [compute capability](https://developer.nvidia.com/cuda-gpus) 5.2 or higher)
 - ROCm (AMD GPUs)
 - OpenVINO (Intel GPUs such as Iris Xe and Arc)
@@ -23,6 +24,7 @@ You do not need to redo any machine learning jobs after enabling hardware accele
 - Only Linux and Windows (through WSL2) servers are supported.
 - ARM NN is only supported on devices with Mali GPUs. Other Arm devices are not supported.
 - Some models may not be compatible with certain backends. CUDA is the most reliable.
+- Hailo only runs models that have a Hailo build. Any other model, and the CLIP text encoder (smart search queries), runs on the CPU instead. Hailo builds are not yet published for any model.
 - Search latency isn't improved by ARM NN due to model compatibility issues preventing its use. However, smart search jobs do make use of ARM NN.
 
 ## Prerequisites
@@ -77,6 +79,15 @@ You do not need to redo any machine learning jobs after enabling hardware accele
       - 992 # Replace this number with the number you found with getent group render
   ```
 
+#### Hailo
+
+- You must have a Hailo-8 or Hailo-8L PCIe accelerator, such as the Raspberry Pi AI Kit or AI HAT+.
+- The host must have the Hailo PCIe driver and firmware installed (`hailort-pcie-driver`), at the same HailoRT version
+  as the image (currently 4.24.0). `/dev/hailo0` must be available in the host server.
+  - On Raspberry Pi OS, `sudo apt install hailo-all` installs them; check the installed version with
+    `hailortcli fw-control identify`.
+- Optional: Configure your `.env` file, see [environment variables](/install/environment-variables) for Hailo specific settings
+
 #### RKNN
 
 - You must have a supported Rockchip SoC: only RK3566, RK3568, RK3576 and RK3588 are supported at this moment.
@@ -92,7 +103,7 @@ You do not need to redo any machine learning jobs after enabling hardware accele
 <ComposeBuilder />
 
 1. If you do not already have it, download the latest [`hwaccel.ml.yml`][hw-file] file and ensure it's in the same folder as the `docker-compose.yml`.
-2. In `immich-machine-learning`, add one of -[armnn, cuda, rocm, openvino, rknn] to the `image` section's tag at the end of the line.
+2. In `immich-machine-learning`, add one of -[armnn, cuda, rocm, openvino, rknn, hailo] to the `image` section's tag at the end of the line.
 3. Still in the `docker-compose.yml` under `immich-machine-learning`, uncomment the `extends` section and change `cpu` to the appropriate backend.
 4. Redeploy the `immich-machine-learning` container with these updated settings.
 

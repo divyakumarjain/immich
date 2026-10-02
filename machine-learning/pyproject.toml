@@ -56,6 +56,9 @@ cuda = [
 ]
 openvino = ["onnxruntime-openvino>=1.24.1,<2"]
 armnn = ["onnxruntime>=1.23.2,<2"]
+# HailoRT's Python package is not on PyPI; the hailo image builds it from hailo-ai/hailort's source.
+# onnxruntime runs what each compiled graph leaves to the host (tail.onnx) and any model without a Hailo build.
+hailo = ["onnxruntime>=1.23.2,<2"]
 rknn = ["onnxruntime>=1.23.2,<2", "rknn-toolkit-lite2>=2.3.0,<3"]
 rocm = ["onnxruntime-migraphx>=1.23.2,<2"]
 
