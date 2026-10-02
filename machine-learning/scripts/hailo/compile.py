@@ -30,7 +30,7 @@ from onnx import numpy_helper
 
 # where Immich's v2 face graphs hand over to the host: the per-stride fused SCRFD heads (score|box|kps,
 # 15 channels per anchor) before their Transpose/Reshape/Split/Sigmoid, and ArcFace's Gemm before its L2 norm
-DEFAULT_CUTS = {
+DEFAULT_CUTS: dict[str, dict[str, Any]] = {
     "detection": {"end": ["val_0", "val_4", "val_8"], "hw": (640, 640)},
     "recognition": {"end": ["683"], "hw": (112, 112)},
 }
@@ -65,7 +65,7 @@ def preprocess(model: onnx.ModelProto) -> tuple[str, list[float], list[float]]:
         raise SystemExit("not a fused uint8 graph: expected Cast -> Transpose -> Sub at its input")
     channels = image.type.tensor_type.shape.dim[3].dim_value
     mean = constant(model, sub.input[1])
-    std = np.ones(1, dtype=np.float32)
+    std: NDArray[Any] = np.ones(1, dtype=np.float32)
     start = sub.output[0]
     scale = sole(start, "Mul") or sole(start, "Div")
     if scale is not None and (factor := constant(model, scale.input[1])) is not None and factor.size in (1, channels):
@@ -87,7 +87,21 @@ def prepare(source: Path, work: Path, end: list[str], hw: tuple[int, int]) -> tu
     body = onnx.shape_inference.infer_shapes(body)
     path = work / f"{source.parent.name}.cut.onnx"
     onnx.save(body, path.as_posix())  # weights inline: one self-contained file for the parser
-    return path, {"start": start, "end": end, "mean": mean, "std": std, "hw": list(hw)}
+    # what the session replays on the host past the cut, from the cut tensors to the graph's own outputs
+    tail = onnx.utils.Extractor(model).extract_model(end, [output.name for output in model.graph.output])
+    onnx.save(tail, (work / "tail.onnx").as_posix())
+    image = model.graph.input[0]
+    # a source graph that left height/width free declares the size it was pinned to, as an rknn binary does
+    free = any(dim.dim_param for dim in image.type.tensor_type.shape.dim[1:3])
+    return path, {
+        "start": start,
+        "end": end,
+        "mean": mean,
+        "std": std,
+        "hw": list(hw),
+        "input": image.name,
+        "dims": [{"height": hw[0], "width": hw[1]}] if free else [{}],
+    }
 
 
 def alls(spec: dict[str, Any], args: argparse.Namespace, calib_size: int) -> str:
@@ -99,6 +113,21 @@ def alls(spec: dict[str, Any], args: argparse.Namespace, calib_size: int) -> str
         *args.alls,
     ]
     return "\n".join(lines) + "\n"
+
+
+def output_map(hef_path: Path, cut: Path) -> dict[str, str]:
+    """HEF output vstream -> the cut tensor it carries, from the parser's record of the nodes behind each output."""
+    import hailo_platform as hpf
+
+    hef = hpf.HEF(hef_path.as_posix())
+    produces = {node.name: node.output[0] for node in onnx.load(cut.as_posix(), load_external_data=False).graph.node}
+    mapping = {}
+    for info in hef.get_output_vstream_infos():
+        found = [produces[name] for name in hef.get_original_names_from_vstream_name(info.name) if name in produces]
+        if not found:
+            raise RuntimeError(f"{info.name} names no node of {cut.name}")
+        mapping[info.name] = found[-1]
+    return mapping
 
 
 def emulator_check(runner: Any, cut: Path, holdout: NDArray[np.uint8], spec: dict[str, Any]) -> dict[str, Any]:
@@ -150,7 +179,8 @@ def main() -> None:
 
     submodel = args.onnx.parent.name
     defaults = DEFAULT_CUTS.get(submodel, {})
-    end, hw = args.end or defaults.get("end"), tuple(args.hw or defaults.get("hw", ()))
+    end: list[str] = args.end or defaults.get("end", [])
+    hw = tuple(args.hw or defaults.get("hw", ()))
     if not end or len(hw) != 2:
         raise SystemExit(f"no default cut for {submodel!r}; pass --end and --hw")
     args.out.mkdir(parents=True, exist_ok=True)
@@ -179,19 +209,25 @@ def main() -> None:
 
     import hailo_sdk_client
 
+    # the session's contract first (immich_ml.sessions.hailo reads dims/input/cut), the build record under it
     (args.out / "model.json").write_text(
         json.dumps(
             {
-                "source": args.onnx.as_posix(),
-                "source_sha256": hashlib.sha256(args.onnx.read_bytes()).hexdigest(),
-                "calib": {"path": args.calib.as_posix(), "frames": len(calib), "holdout": len(holdout)},
-                "arch": args.arch,
-                "dfc": getattr(hailo_sdk_client, "__version__", "unknown"),
-                "cut": spec,
-                "alls": script,
-                "emulator": check,
-                "hef_sha256": hashlib.sha256(hef).hexdigest(),
-                "minutes": round((time.time() - started) / 60, 1),
+                "dims": spec["dims"],
+                "input": spec["input"],
+                "cut": output_map(args.out / "model.hef", cut),
+                "build": {
+                    "source": args.onnx.as_posix(),
+                    "source_sha256": hashlib.sha256(args.onnx.read_bytes()).hexdigest(),
+                    "calib": {"path": args.calib.as_posix(), "frames": len(calib), "holdout": len(holdout)},
+                    "arch": args.arch,
+                    "dfc": getattr(hailo_sdk_client, "__version__", "unknown"),
+                    "cut": spec,
+                    "alls": script,
+                    "emulator": check,
+                    "hef_sha256": hashlib.sha256(hef).hexdigest(),
+                    "minutes": round((time.time() - started) / 60, 1),
+                },
             },
             indent=2,
         )

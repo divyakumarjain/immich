@@ -33,6 +33,8 @@ from immich_model.constants import FACE_DETECTION_SIZE as DET_SIZE  # noqa: E402
 from immich_ml.models.facial_recognition._ops import ALIGNED_SIZE, align_face, decode_scrfd, nms  # noqa: E402
 from immich_ml.models.transforms import crop_pil, decode_pil, letterbox, normalize, resize_pil, widen  # noqa: E402
 
+__all__ = ["DET_SIZE", "HostTail", "OnnxModel", "crops", "detect", "letterbox"]
+
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 Outputs = dict[str, NDArray[np.float32]]
 
@@ -115,7 +117,10 @@ def pair_outputs(onnx: Outputs, hef: Outputs, forced: dict[str, str]) -> dict[st
     candidates = {
         o: [h for h in hef if hef_size[h] == size[o] and h not in forced.values()] for o in onnx if o not in forced
     }
-    ratio = lambda o, h: hef[h].shape[-1] / onnx[o].shape[-1]  # noqa: E731
+
+    def ratio(o: str, h: str) -> float:
+        return float(hef[h].shape[-1] / onnx[o].shape[-1])
+
     shared = Counter(ratio(o, hs[0]) for o, hs in candidates.items() if len(hs) == 1).most_common(1)
     for o, hs in candidates.items():
         chosen = hs if len(hs) == 1 else [h for h in hs if shared and ratio(o, h) == shared[0][0]]
@@ -135,7 +140,10 @@ def cosine_rows(a: NDArray[np.float32], b: NDArray[np.float32]) -> NDArray[np.fl
     if len(a) == 0:  # a photo without faces
         return np.empty(0, dtype=np.float32)
     a, b = a.reshape(len(a), -1), b.reshape(len(b), -1)
-    return np.sum(a * b, axis=1) / (np.linalg.norm(a, axis=1) * np.linalg.norm(b, axis=1) + 1e-12)
+    cosine: NDArray[np.float32] = np.sum(a * b, axis=1) / (
+        np.linalg.norm(a, axis=1) * np.linalg.norm(b, axis=1) + 1e-12
+    )
+    return cosine
 
 
 def fidelity(a: NDArray[np.float32], b: NDArray[np.float32]) -> dict[str, float]:
@@ -189,7 +197,7 @@ def run_tensor(args: argparse.Namespace) -> dict[str, Any]:
     height, width = hef.inputs[0].shape[:2]
     forced = dict(item.split("=", 1) for item in args.output_map)
     pairs: dict[str, str] | None = None
-    per_output: dict[str, list[dict[str, float]]] = {}
+    per_output: dict[str, list[dict[str, Any]]] = {}
     onnx_ms: list[float] = []
     hef_ms: list[float] = []
 
@@ -227,8 +235,9 @@ def iou(a: NDArray[np.float32], b: NDArray[np.float32]) -> NDArray[np.float32]:
     lt = np.maximum(a[:, None, :2], b[None, :, :2])
     rb = np.minimum(a[:, None, 2:], b[None, :, 2:])
     inter = np.prod(np.clip(rb - lt, 0, None), axis=2)
-    area = lambda x: np.prod(x[:, 2:] - x[:, :2], axis=1)  # noqa: E731
-    return inter / (area(a)[:, None] + area(b)[None, :] - inter + 1e-9)
+    area_a, area_b = np.prod(a[:, 2:] - a[:, :2], axis=1), np.prod(b[:, 2:] - b[:, :2], axis=1)
+    overlap: NDArray[np.float32] = (inter / (area_a[:, None] + area_b[None, :] - inter + 1e-9)).astype(np.float32)
+    return overlap
 
 
 def match(a: NDArray[np.float32], b: NDArray[np.float32], threshold: float = 0.5) -> list[tuple[int, int]]:
@@ -288,7 +297,9 @@ def crops(image: NDArray[np.uint8], landmarks: NDArray[np.float32]) -> NDArray[n
     return out
 
 
-def embed(run: Callable[[NDArray[np.uint8]], list[NDArray[np.float32]]], faces: NDArray[np.uint8]) -> NDArray:
+def embed(
+    run: Callable[[NDArray[np.uint8]], list[NDArray[np.float32]]], faces: NDArray[np.uint8]
+) -> NDArray[np.float32]:
     if len(faces) == 0:
         return np.empty((0, 512), dtype=np.float32)
     embedding = run(faces)[0].reshape(len(faces), -1)
@@ -316,7 +327,11 @@ def run_face(args: argparse.Namespace) -> dict[str, Any]:
         forced,
     )
     ms: dict[str, list[float]] = {"det_onnx": [], "det_hef": [], "rec_onnx": [], "rec_hef": []}
-    det_rows, rec_cos, e2e_cos, all_onnx, all_e2e = [], [], [], [], []
+    det_rows: list[dict[str, Any]] = []
+    rec_cos: list[float] = []
+    e2e_cos: list[float] = []
+    all_onnx: list[NDArray[np.float32]] = []
+    all_e2e: list[NDArray[np.float32]] = []
 
     for name, image in load_images(args.images, args.limit):
         pixels = np.asarray(image, dtype=np.uint8)

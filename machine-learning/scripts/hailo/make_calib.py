@@ -16,6 +16,7 @@ import hashlib
 import json
 import random
 from pathlib import Path
+from typing import Any
 
 import cv2
 import numpy as np
@@ -39,7 +40,9 @@ def subject(faces: dict[str, NDArray[np.float32]], size: tuple[int, int]) -> int
     return int(np.argmin(np.linalg.norm(centers - np.array(size) / 2, axis=1)))
 
 
-def rec_set(paths: list[Path], detector: OnnxModel, count: int, min_score: float) -> tuple[NDArray[np.uint8], list]:
+def rec_set(
+    paths: list[Path], detector: OnnxModel, count: int, min_score: float
+) -> tuple[NDArray[np.uint8], list[str]]:
     out, used = [], []
     for path in paths:
         image = Image.open(path).convert("RGB")
@@ -67,7 +70,7 @@ def mosaic(paths: list[Path], grid: int) -> NDArray[np.uint8]:
     return canvas
 
 
-def det_set(paths: list[Path], count: int, rng: random.Random) -> tuple[NDArray[np.uint8], list]:
+def det_set(paths: list[Path], count: int, rng: random.Random) -> tuple[NDArray[np.uint8], list[dict[str, Any]]]:
     out, used = [], []
     for k in range(count):
         grid = (1, 2, 4)[k % 3]

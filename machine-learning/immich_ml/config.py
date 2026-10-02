@@ -71,6 +71,8 @@ class Settings(BaseSettings):
     ann_tuning_level: int = 2
     rknn: bool = True
     rknn_threads: int = 1
+    hailo: bool = True
+    hailo_batch_size: int = 8
     preload: PreloadModelData | None = None
     max_batch_size: MaxBatchSize = MaxBatchSize()
     model_organization: ModelOrganization = ModelOrganization.APP

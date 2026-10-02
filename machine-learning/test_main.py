@@ -61,6 +61,8 @@ from immich_ml.schemas import (
     VisualOptions,
 )
 from immich_ml.sessions.ann import AnnSession
+from immich_ml.sessions.hailo import HailoSession
+from immich_ml.sessions.hailo import model_path as hailo_model_path
 from immich_ml.sessions.ort import Device, GraphSpec, OrtSession, flush_denormals, fresh, prepared
 from immich_ml.sessions.policy import ShapePolicy, batches, runs
 from immich_ml.sessions.rknn import RknnSession, run_inference
@@ -149,6 +151,25 @@ class TestBase:
 
         assert encoder.model_format == ModelFormat.RKNN
 
+    def test_sets_default_model_format_to_hailo_if_available(self, mocker: MockerFixture) -> None:
+        mocker.patch("immich_ml.sessions.hailo.is_available", True)
+        mocker.patch("immich_ml.sessions.rknn.is_available", True)
+
+        assert FaceRecognizer("buffalo_l").model_format == ModelFormat.HAILO
+
+    def test_opens_the_hef_compiled_for_the_device(self, mocker: MockerFixture) -> None:
+        mocker.patch("immich_ml.sessions.hailo.architecture", "hailo8l")
+
+        assert hailo_model_path(Path("/cache/detection")) == Path("/cache/detection/hailo/hailo8l/model.hef")
+        detector = FaceDetector("buffalo_l", cache_dir="/cache", model_format=ModelFormat.HAILO)
+        assert detector.model_path == Path("/cache/detection/hailo/hailo8l/model.hef")
+
+    def test_download_downloads_hailo_if_preferred_format(self, snapshot_download: mock.Mock) -> None:
+        encoder = FaceRecognizer("buffalo_l", model_format=ModelFormat.HAILO)
+        encoder.download()
+
+        assert snapshot_download.call_args.kwargs["ignore_patterns"] == ["*.armnn", "*.rknn"]
+
     def test_casts_cache_dir_string_to_path(self) -> None:
         cache_dir = "/test_cache"
         encoder = OpenClipTextualEncoder("ViT-B-32__openai", cache_dir=cache_dir)
@@ -233,20 +254,20 @@ class TestBase:
             revision=settings.model_revision,
             cache_dir=encoder.cache_dir,
             local_dir=encoder.cache_dir,
-            ignore_patterns=["*.armnn", "*.rknn"],
+            ignore_patterns=["*.armnn", "*.rknn", "*.hef"],
         )
 
     def test_download_downloads_armnn_if_preferred_format(self, snapshot_download: mock.Mock) -> None:
         encoder = OpenClipTextualEncoder("ViT-B-32__openai", model_format=ModelFormat.ARMNN)
         encoder.download()
 
-        assert snapshot_download.call_args.kwargs["ignore_patterns"] == ["*.rknn"]
+        assert snapshot_download.call_args.kwargs["ignore_patterns"] == ["*.rknn", "*.hef"]
 
     def test_download_downloads_rknn_if_preferred_format(self, snapshot_download: mock.Mock) -> None:
         encoder = OpenClipTextualEncoder("ViT-B-32__openai", model_format=ModelFormat.RKNN)
         encoder.download()
 
-        assert snapshot_download.call_args.kwargs["ignore_patterns"] == ["*.armnn"]
+        assert snapshot_download.call_args.kwargs["ignore_patterns"] == ["*.armnn", "*.hef"]
 
     def test_throws_exception_if_model_path_does_not_exist(
         self, ort_session: mock.Mock, path: mock.Mock, mocker: MockerFixture
@@ -1009,6 +1030,100 @@ class TestRknnSession:
         rknn_session.return_value.custom_string = '{"dims":[{}]}'
 
         assert RknnSession(Path("buffalo_l")).shapes == (Shape(batch=1),)
+
+
+def _tail(path: Path, name: str, shape: list[Any], op: str) -> None:
+    """A stand-in for the host tail the compiler leaves: one op from the cut tensor to the graph's output."""
+    import onnx
+    from onnx import TensorProto, helper
+
+    cut = helper.make_tensor_value_info(name, TensorProto.FLOAT, shape)
+    out = helper.make_tensor_value_info("output", TensorProto.FLOAT, None)
+    nodes = [helper.make_node(op, [name], ["output"])]
+    graph = helper.make_graph(nodes, "tail", [cut], [out])
+    onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 19)], ir_version=9), path)
+
+
+@pytest.fixture
+def hailo(mocker: MockerFixture) -> SimpleNamespace:
+    hpf = mock.MagicMock()
+    mocker.patch.dict(sys.modules, {"hailo_platform": hpf})
+    vdevice = mocker.patch("immich_ml.sessions.hailo._vdevice")
+    hef = hpf.HEF.return_value
+    hef.get_network_group_names.return_value = ["net"]
+    hef.get_network_groups_infos.return_value = [SimpleNamespace(is_multi_context=True)]
+    hef.get_input_vstream_infos.return_value = [SimpleNamespace(name="net/input_layer1", shape=(112, 112, 3))]
+    hef.get_output_vstream_infos.return_value = [SimpleNamespace(name="net/fc1", shape=(512,))]
+    configure = {"net": SimpleNamespace(batch_size=None)}
+    hpf.ConfigureParams.create_from_hef.return_value = configure
+    pipeline = hpf.InferVStreams.return_value
+    return SimpleNamespace(hpf=hpf, hef=hef, configure=configure, pipeline=pipeline, vdevice=vdevice)
+
+
+def _contract(model_dir: Path, cut: dict[str, str], **extra: Any) -> Path:
+    model_dir.mkdir(parents=True, exist_ok=True)
+    (model_dir / "model.json").write_text(json.dumps({"input": "image", "cut": cut, **extra}))
+    (model_dir / "model.hef").touch()
+    return model_dir / "model.hef"
+
+
+class TestHailoSession:
+    def test_feeds_raw_pixels_and_replays_the_tail(self, hailo: SimpleNamespace, tmp_path: Path) -> None:
+        _tail(tmp_path / "tail.onnx", "683", ["batch", 512], "Neg")
+        session = HailoSession(_contract(tmp_path, {"net/fc1": "683"}))
+        frames = np.random.randint(0, 255, (3, 112, 112, 3), dtype=np.uint8)
+        hailo.pipeline.infer.return_value = {"net/fc1": np.ones((3, 512), dtype=np.float32)}
+
+        (embedding,) = session.run(None, {"image": frames})
+
+        fed = hailo.pipeline.infer.call_args.args[0]["net/input_layer1"]
+        assert fed.dtype == np.uint8 and np.array_equal(fed, frames)
+        assert np.array_equal(embedding, -np.ones((3, 512), dtype=np.float32))
+        assert session.normalizes_input
+        assert session.get_inputs()[0].name == "image"
+        assert [node.name for node in session.get_outputs()] == ["output"]
+
+    def test_hands_the_tail_nchw_feature_maps(self, hailo: SimpleNamespace, tmp_path: Path) -> None:
+        hailo.hef.get_output_vstream_infos.return_value = [SimpleNamespace(name="net/conv41", shape=(2, 3, 30))]
+        _tail(tmp_path / "tail.onnx", "val_0", ["batch", 30, 2, 3], "Identity")
+        session = HailoSession(_contract(tmp_path, {"net/conv41": "val_0"}))
+        nhwc = np.arange(2 * 3 * 30, dtype=np.float32).reshape(1, 2, 3, 30)
+        hailo.pipeline.infer.return_value = {"net/conv41": nhwc}
+
+        (out,) = session.run(None, {"image": np.zeros((1, 112, 112, 3), dtype=np.uint8)})
+
+        assert np.array_equal(out, nhwc.transpose(0, 3, 1, 2))
+
+    def test_batches_a_multi_context_binary_on_the_device(self, hailo: SimpleNamespace, tmp_path: Path) -> None:
+        _tail(tmp_path / "tail.onnx", "683", ["batch", 512], "Identity")
+
+        session = HailoSession(_contract(tmp_path, {"net/fc1": "683"}))
+
+        assert hailo.configure["net"].batch_size == settings.hailo_batch_size
+        # any count of frames is one call, so faces are never split into smaller runs than needed
+        assert runs(5, session.batches) == [5]
+
+    def test_runs_a_resident_binary_one_frame_per_pass(self, hailo: SimpleNamespace, tmp_path: Path) -> None:
+        hailo.hef.get_network_groups_infos.return_value = [SimpleNamespace(is_multi_context=False)]
+        _tail(tmp_path / "tail.onnx", "683", ["batch", 512], "Identity")
+
+        HailoSession(_contract(tmp_path, {"net/fc1": "683"}))
+
+        assert hailo.configure["net"].batch_size == 1
+
+    def test_rejects_frames_the_binary_was_not_compiled_for(self, hailo: SimpleNamespace, tmp_path: Path) -> None:
+        _tail(tmp_path / "tail.onnx", "683", ["batch", 512], "Identity")
+        session = HailoSession(_contract(tmp_path, {"net/fc1": "683"}))
+
+        with pytest.raises(ValueError, match="takes uint8"):
+            session.run(None, {"image": np.zeros((1, 3, 112, 112), dtype=np.float32)})
+
+    def test_shapes_come_from_the_contract(self, hailo: SimpleNamespace, tmp_path: Path) -> None:
+        _tail(tmp_path / "tail.onnx", "683", ["batch", 512], "Identity")
+
+        session = HailoSession(_contract(tmp_path, {"net/fc1": "683"}, dims=[{"height": 640, "width": 640}]))
+
+        assert session.shapes == (Shape(batch=1, height=640, width=640),)
 
 
 class TestCLIP:

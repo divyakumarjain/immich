@@ -11,6 +11,7 @@ from typing import Any, ClassVar, Self
 from huggingface_hub import snapshot_download
 
 import immich_ml.sessions.ann.loader
+import immich_ml.sessions.hailo as hailo
 import immich_ml.sessions.rknn as rknn
 from immich_ml.sessions.ort import OrtSession
 
@@ -21,9 +22,10 @@ from ..sessions.policy import ShapePolicy
 from .constants import get_model_source
 
 _IGNORED_PATTERNS: dict[ModelFormat, list[str]] = {
-    ModelFormat.ONNX: ["*.armnn", "*.rknn"],
-    ModelFormat.ARMNN: ["*.rknn"],
-    ModelFormat.RKNN: ["*.armnn"],
+    ModelFormat.ONNX: ["*.armnn", "*.rknn", "*.hef"],
+    ModelFormat.ARMNN: ["*.rknn", "*.hef"],
+    ModelFormat.RKNN: ["*.armnn", "*.hef"],
+    ModelFormat.HAILO: ["*.armnn", "*.rknn"],
 }
 
 
@@ -137,6 +139,8 @@ class InferenceModel[O: Options](ABC):
                 return OrtSession(self.model_path, self.shape_policy, threads=self.threads)
             case ModelFormat.RKNN:
                 return rknn.RknnSession(self.model_path)
+            case ModelFormat.HAILO:
+                return hailo.HailoSession(self.model_path)
 
     @property
     def model_dir(self) -> Path:
@@ -146,6 +150,8 @@ class InferenceModel[O: Options](ABC):
     def model_path(self) -> Path:
         if self.model_format == ModelFormat.RKNN:
             return rknn.model_path(self.model_dir, self.shape_policy.label)
+        if self.model_format == ModelFormat.HAILO:
+            return hailo.model_path(self.model_dir, self.shape_policy.label)
         return self.model_dir / f"model.{self.model_format}"
 
     @property
@@ -184,6 +190,8 @@ class InferenceModel[O: Options](ABC):
 
     @property
     def _model_format_default(self) -> ModelFormat:
+        if hailo.is_available:
+            return ModelFormat.HAILO
         if rknn.is_available:
             return ModelFormat.RKNN
         elif immich_ml.sessions.ann.loader.is_available and settings.ann:
