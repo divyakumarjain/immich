@@ -416,26 +416,33 @@ def alls(spec: dict[str, Any], args: argparse.Namespace, calib_size: int) -> str
     return "\n".join(lines) + "\n"
 
 
-def output_map(runner: Any, cut: Path) -> dict[str, str]:
+def output_map(runner: Any, cut: Path, end: list[str]) -> dict[str, str]:
     """HEF output vstream -> the cut tensor it carries, from the parser's record (in the compiled HN) of the nodes
-    behind each output layer. The same names HailoRT reports from the .hef, without needing its C library here."""
+    behind each output layer. The same names HailoRT reports from the .hef, without needing its C library here.
+
+    Only a cut tensor can be named: the tail starts from those. A fused layer's record may stop short of the node
+    that closes it (SigLIP's conv53 takes in the residual add after linear_52, but records only linear_52), so an
+    output whose record names no cut tensor is matched by elimination, which a single output always is."""
     hn = runner.get_hn_dict()
     layers = hn["layers"]
     produces = {node.name: node.output[0] for node in onnx.load(cut.as_posix(), load_external_data=False).graph.node}
+    outputs = [layer for layer in layers.values() if layer["type"] == "output_layer"]
     mapping = {}
-    for layer in layers.values():
-        if layer["type"] != "output_layer":
-            continue
+    for layer in outputs:
         (source,) = layer["input"]
         # past layers the model script added (a format_conversion folding a sequence), which no ONNX node made:
         # HailoRT names the output after the compute layer they reshape, as it does Hailo's own PP-OCR
         while not layers[source].get("original_names") and len(layers[source].get("input", [])) == 1:
             (source,) = layers[source]["input"]
         vstream = source if "/" in source else f"{hn['name']}/{source}"
-        found = [produces[name] for name in layers[source].get("original_names", []) if name in produces]
-        if not found:
-            raise RuntimeError(f"{vstream} names no node of {cut.name}")
-        mapping[vstream] = found[-1]
+        found = [produces[name] for name in layers[source].get("original_names", []) if produces.get(name) in end]
+        mapping[vstream] = found[-1] if found else ""
+    unmatched = [v for v, t in mapping.items() if not t]
+    left = [t for t in end if t not in mapping.values()]
+    if len(unmatched) == 1 and len(left) == 1:
+        mapping[unmatched[0]] = left[0]
+    elif unmatched:
+        raise RuntimeError(f"{unmatched} name no cut tensor of {cut.name} ({end})")
     return mapping
 
 
@@ -563,7 +570,7 @@ def compile_graph(args: argparse.Namespace, cut: Path, spec: dict[str, Any]) -> 
             {
                 "dims": spec["dims"],
                 "input": spec["input"],
-                "cut": output_map(runner, cut),
+                "cut": output_map(runner, cut, spec["end"]),
                 "metadata": spec.get("metadata", {}),
                 "build": {
                     "source": spec["source"],
