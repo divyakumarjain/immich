@@ -141,7 +141,8 @@ class HailoGraph:
                 f"binary takes uint8 {list(self.compiled.shape)} frames, fed {frames.dtype} {list(frames.shape)}"
             )
         with self.lock:
-            compiled = self.pipeline.infer({self.compiled.name: np.ascontiguousarray(frames)})
+            # HailoRT writes into what it is given: a read-only view (np.asarray of a PIL image) is copied first
+            compiled = self.pipeline.infer({self.compiled.name: np.require(frames, requirements=["C", "W"])})
         if self.tail is None:
             names = output_names or [node.name for node in self.outputs]
             return [compiled[name] for name in names]

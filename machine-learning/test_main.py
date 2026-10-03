@@ -1103,6 +1103,19 @@ class TestHailoSession:
 
         assert np.array_equal(out, nhwc.transpose(0, 3, 1, 2))
 
+    def test_feeds_hailort_a_writable_copy_of_a_read_only_frame(self, hailo: SimpleNamespace, tmp_path: Path) -> None:
+        # OpenClipVisualEncoder feeds np.asarray(image), a read-only view HailoRT's infer refuses
+        _tail(tmp_path / "tail.onnx", "683", ["batch", 512], "Identity")
+        graph = HailoSession(_contract(tmp_path, {"net/fc1": "683"})).for_shape(Shape(1))
+        frames = np.zeros((1, 112, 112, 3), dtype=np.uint8)
+        frames.flags.writeable = False
+        hailo.pipeline.infer.return_value = {"net/fc1": np.zeros((1, 512), dtype=np.float32)}
+
+        graph.run(None, {"image": frames})
+
+        fed = hailo.pipeline.infer.call_args.args[0]["net/input_layer1"]
+        assert fed.flags.writeable and fed.flags.c_contiguous
+
     def test_hands_the_tail_per_position_sequences(self, hailo: SimpleNamespace, tmp_path: Path) -> None:
         # OCR's logits: HailoRT returns (N, 1, L, classes), the CTC tail reads (N, L, classes)
         hailo.hef.get_output_vstream_infos.return_value = [SimpleNamespace(name="net/conv29", shape=(1, 5, 30))]
