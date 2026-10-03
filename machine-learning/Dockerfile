@@ -61,6 +61,21 @@ RUN mkdir /opt/armnn && \
 
 FROM python:3.12-slim-trixie@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f AS builder-rknn
 
+FROM python:3.13-slim-trixie@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b AS builder-hailo
+
+# renovate: datasource=github-tags depName=hailo-ai/hailort
+ARG HAILORT_VERSION="v4.24.0"
+
+# built from source: HailoRT's Python package is not on PyPI, and its prebuilt binaries need a Hailo account.
+# The version must match the HailoRT driver/firmware on the host, as HailoRT refuses a mismatched device.
+RUN apt-get update && apt-get install -y --no-install-recommends cmake g++ git make && \
+    git clone --depth 1 --branch "${HAILORT_VERSION}" https://github.com/hailo-ai/hailort.git /tmp/hailort && \
+    cmake -S /tmp/hailort -B /tmp/hailort/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/hailort && \
+    cmake --build /tmp/hailort/build --config release --target install -j"$(nproc)" && \
+    CMAKE_PREFIX_PATH=/opt/hailort pip wheel --no-deps -w /opt/hailort/wheels \
+        /tmp/hailort/hailort/libhailort/bindings/python/platform && \
+    rm -rf /tmp/hailort
+
 # Warning: 25GiB+ disk space required to pull this image
 # TODO: find a way to reduce the image size
 FROM rocm/dev-ubuntu-24.04:7.2-complete@sha256:86e11093b4a7ec2a79b1b6701d10e840a6994f21c7e05929b51eb9be361c683a AS builder-rocm
@@ -80,6 +95,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     uv sync --frozen --extra ${DEVICE} --no-dev --no-editable --no-install-project --compile-bytecode --no-progress --active --link-mode copy && \
     if [ "$DEVICE" = "openvino" ]; then uv pip install --no-deps /opt/onnxruntime_openvino-*.whl; fi
+RUN --mount=type=cache,target=/root/.cache/uv \
+    if [ "$DEVICE" = "hailo" ]; then uv pip install --compile-bytecode --link-mode copy /opt/hailort/wheels/*.whl; fi
 
 FROM python:3.13-slim-trixie@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b AS prod-cpu
 
@@ -149,6 +166,15 @@ ARG RKNN_TOOLKIT_VERSION="v2.3.0"
 ENV MACHINE_LEARNING_MODEL_ARENA=false
 
 ADD --chmod=644 --checksum=sha256:73993ed4b440460825f21611731564503cc1d5a0c123746477da6cd574f34885 "https://github.com/airockchip/rknn-toolkit2/raw/refs/tags/${RKNN_TOOLKIT_VERSION}/rknpu2/runtime/Linux/librknn_api/aarch64/librknnrt.so" /usr/lib/
+
+FROM python:3.13-slim-trixie@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b AS prod-hailo
+
+ENV MACHINE_LEARNING_MODEL_ARENA=false
+
+# libhailort for the Python binding, and hailortcli to check the device from inside the container
+COPY --from=builder-hailo /opt/hailort/lib/ /opt/hailort/lib/
+COPY --from=builder-hailo /opt/hailort/bin/hailortcli /usr/local/bin/
+RUN echo /opt/hailort/lib > /etc/ld.so.conf.d/hailort.conf && ldconfig
 
 FROM python:3.13-slim-trixie@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b AS mimalloc
 RUN echo "deb http://deb.debian.org/debian trixie-backports main" > /etc/apt/sources.list.d/backports.list && \

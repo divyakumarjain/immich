@@ -708,6 +708,9 @@ cuda = [
     { name = "onnxruntime-ep-nv-tensorrt-rtx-cu12", marker = "platform_machine == 'x86_64'" },
     { name = "onnxruntime-gpu" },
 ]
+hailo = [
+    { name = "onnxruntime" },
+]
 openvino = [
     { name = "onnxruntime-openvino" },
 ]
@@ -774,6 +777,7 @@ requires-dist = [
     { name = "onnx", specifier = ">=1.22.0" },
     { name = "onnxruntime", marker = "extra == 'armnn'", specifier = ">=1.23.2,<2" },
     { name = "onnxruntime", marker = "extra == 'cpu'", specifier = ">=1.23.2,<2" },
+    { name = "onnxruntime", marker = "extra == 'hailo'", specifier = ">=1.23.2,<2" },
     { name = "onnxruntime", marker = "extra == 'rknn'", specifier = ">=1.23.2,<2" },
     { name = "onnxruntime-ep-nv-tensorrt-rtx-cu12", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = ">=0.4.0,<0.5" },
     { name = "onnxruntime-gpu", marker = "extra == 'cuda'", specifier = ">=1.27.1,<1.28", index = "https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/" },
@@ -791,7 +795,7 @@ requires-dist = [
     { name = "tokenizers", specifier = ">=0.15.0,<1.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.22.0,<1.0" },
 ]
-provides-extras = ["cpu", "cuda", "openvino", "armnn", "rknn", "rocm"]
+provides-extras = ["cpu", "cuda", "openvino", "armnn", "hailo", "rknn", "rocm"]
 
 [package.metadata.requires-dev]
 dev = [

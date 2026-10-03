@@ -21,6 +21,10 @@ services:
     devices:
       - /dev/dri:/dev/dri
 
+  hailo:
+    devices:
+      - /dev/hailo0:/dev/hailo0 # Hailo-8/8L PCIe accelerator; the host needs the hailort-pcie-driver matching the image's HailoRT
+
   cpu: {}
 
   cuda:
