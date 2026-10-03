@@ -170,6 +170,40 @@ def canonical_layouts(body: onnx.ModelProto) -> None:
         print(f"rewrote {node.op_type} {node.name} as Reshape{shape}")
 
 
+def concat_token_pads(body: onnx.ModelProto) -> None:
+    """A zero Pad along a sequence's token axis as a Concat with a zero constant: how CLIP's ViT export makes room
+    for its class token (the Add after it writes the token in). The DFC parser misreads that Pad as splitting the
+    feature map along height (`[-1, 2, 49, ...]` into the first attention matmul), but takes the Concat as is."""
+    shapes = {
+        value.name: [d.dim_value for d in value.type.tensor_type.shape.dim]
+        for value in [*body.graph.value_info, *body.graph.input]
+    }
+    for node in list(body.graph.node):
+        if node.op_type != "Pad" or len(node.input) < 2:
+            continue
+        shape, pads = shapes.get(node.input[0]), constant(body, node.input[1])
+        value = constant(body, node.input[2]) if len(node.input) > 2 and node.input[2] else None
+        modes = [a.s for a in node.attribute if a.name == "mode"]
+        if shape is None or len(shape) != 3 or pads is None or (value is not None and value.any()):
+            continue
+        if modes and modes[0] != b"constant" or len(node.input) > 3 and node.input[3]:
+            continue
+        before, after = pads[:3].astype(int), pads[3:].astype(int)
+        if before[0] or after[0] or before[2] or after[2] or (before[1] and after[1]) or not (before[1] or after[1]):
+            continue
+        stem = node.name or node.output[0]
+        zeros = f"{stem}_tokens"
+        body.graph.initializer.append(
+            numpy_helper.from_array(np.zeros((1, before[1] or after[1], shape[2]), dtype=np.float32), zeros)
+        )
+        parts = [zeros, node.input[0]] if before[1] else [node.input[0], zeros]
+        concat = onnx.helper.make_node("Concat", parts, list(node.output), name=f"{stem}_concat", axis=1)
+        at = list(body.graph.node).index(node)
+        body.graph.node.remove(node)
+        body.graph.node.insert(at, concat)
+        print(f"rewrote Pad {node.name} as Concat of {before[1] or after[1]} zero token(s)")
+
+
 def decompose_gelu(body: onnx.ModelProto) -> None:
     """Gelu -> Div(x, sqrt 2) -> Erf -> Add(1) -> Mul(x) -> Mul(0.5): the exact chain the DFC folds back into its
     GELU activation (an Erf in any other arrangement, e.g. immich_model's RKNN-ordered 0.5x-first form, is rejected
@@ -377,6 +411,7 @@ def prepare(
         dim.dim_value = value
     body = lower(onnx.shape_inference.infer_shapes(body))
     canonical_layouts(body)
+    concat_token_pads(body)
     body = onnx.shape_inference.infer_shapes(body, strict_mode=True)
     work.mkdir(parents=True, exist_ok=True)
     path = work / f"{source.parent.name}.cut.onnx"
